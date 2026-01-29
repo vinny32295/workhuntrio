@@ -24,44 +24,6 @@ interface Education {
   endDate: string;
 }
 
-// Simple PDF text extraction (handles basic text-based PDFs)
-function extractTextFromPdf(base64Data: string): string {
-  try {
-    const binaryData = atob(base64Data);
-    
-    // Extract text between stream/endstream markers
-    const streamMatches = binaryData.matchAll(/stream\s*([\s\S]*?)\s*endstream/g);
-    let extractedText = "";
-    
-    for (const match of streamMatches) {
-      const streamContent = match[1];
-      // Try to extract readable ASCII text
-      const textContent = streamContent.replace(/[^\x20-\x7E\n\r\t]/g, " ");
-      const cleanText = textContent
-        .replace(/\s+/g, " ")
-        .trim();
-      
-      if (cleanText.length > 10) {
-        extractedText += cleanText + " ";
-      }
-    }
-    
-    // Also try to find text in parentheses (common PDF text encoding)
-    const parenMatches = binaryData.matchAll(/\(([^)]+)\)/g);
-    for (const match of parenMatches) {
-      const text = match[1].replace(/[^\x20-\x7E]/g, "");
-      if (text.length > 2) {
-        extractedText += text + " ";
-      }
-    }
-    
-    return extractedText.trim();
-  } catch (error) {
-    console.error("PDF extraction error:", error);
-    return "";
-  }
-}
-
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
@@ -71,6 +33,7 @@ Deno.serve(async (req) => {
     const lovableApiKey = Deno.env.get("LOVABLE_API_KEY");
     
     if (!lovableApiKey) {
+      console.error("LOVABLE_API_KEY not configured");
       return new Response(
         JSON.stringify({ error: "AI API key not configured" }),
         { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
@@ -96,6 +59,7 @@ Deno.serve(async (req) => {
     const { data: claimsData, error: claimsError } = await supabase.auth.getClaims(token);
 
     if (claimsError || !claimsData?.claims) {
+      console.error("Invalid token:", claimsError);
       return new Response(
         JSON.stringify({ error: "Invalid token" }),
         { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } }
@@ -112,38 +76,21 @@ Deno.serve(async (req) => {
       );
     }
 
-    console.log(`Parsing resume: ${fileName} (${fileType})`);
+    console.log(`Parsing resume: ${fileName} (${fileType}), base64 length: ${fileBase64.length}`);
 
-    // Extract text based on file type
-    let resumeText = "";
-    
-    if (fileType === "application/pdf") {
-      resumeText = extractTextFromPdf(fileBase64);
-    } else {
-      // For Word docs, try basic extraction
-      try {
-        const binaryData = atob(fileBase64);
-        // Extract readable text from XML content in docx
-        const textContent = binaryData.replace(/[^\x20-\x7E\n\r\t]/g, " ");
-        resumeText = textContent.replace(/\s+/g, " ").trim();
-      } catch (e) {
-        console.error("Word extraction error:", e);
-      }
+    // Determine MIME type for the AI
+    let mimeType = "application/pdf";
+    if (fileType?.includes("word") || fileName?.endsWith(".docx") || fileName?.endsWith(".doc")) {
+      mimeType = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
     }
 
-    console.log(`Extracted ${resumeText.length} characters from resume`);
-
-    // Use AI to parse the resume content
-    const prompt = `Parse this resume text and extract work history and education in a structured format.
-
-Resume text:
-${resumeText.substring(0, 15000)}
+    const prompt = `Parse this resume document and extract work history and education in a structured format.
 
 Extract and return a JSON object with:
 {
   "workHistory": [
     {
-      "id": "unique-id-1",
+      "id": "work-1",
       "company": "Company Name",
       "title": "Job Title",
       "startDate": "Mon YYYY",
@@ -153,7 +100,7 @@ Extract and return a JSON object with:
   ],
   "education": [
     {
-      "id": "unique-id-1",
+      "id": "edu-1",
       "institution": "University/School Name",
       "degree": "Degree Type (Bachelor's, Master's, etc.)",
       "field": "Field of Study",
@@ -169,8 +116,11 @@ Rules:
 - Use "Present" for current positions
 - If dates are unclear, use approximate dates
 - Return empty arrays if no work/education found
-- Return ONLY valid JSON, no other text`;
+- Return ONLY valid JSON, no other text or markdown`;
 
+    console.log("Calling Gemini with PDF document...");
+
+    // Use Gemini with inline document data
     const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
       method: "POST",
       headers: {
@@ -182,16 +132,32 @@ Rules:
         messages: [
           { 
             role: "system", 
-            content: "You are a resume parser. Extract work history and education from resume text. Always respond with valid JSON only." 
+            content: "You are a resume parser. Extract work history and education from the attached document. Always respond with valid JSON only, no markdown formatting." 
           },
-          { role: "user", content: prompt },
+          { 
+            role: "user", 
+            content: [
+              {
+                type: "file",
+                file: {
+                  filename: fileName,
+                  file_data: `data:${mimeType};base64,${fileBase64}`
+                }
+              },
+              {
+                type: "text",
+                text: prompt
+              }
+            ]
+          },
         ],
         temperature: 0.1,
       }),
     });
 
     if (!response.ok) {
-      console.error("AI API error:", response.status);
+      const errorText = await response.text();
+      console.error("AI API error:", response.status, errorText);
       return new Response(
         JSON.stringify({ error: "Failed to parse resume" }),
         { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
@@ -201,12 +167,22 @@ Rules:
     const aiData = await response.json();
     const content = aiData.choices?.[0]?.message?.content || "";
 
-    console.log("AI response:", content.substring(0, 500));
+    console.log("AI response length:", content.length);
+    console.log("AI response preview:", content.substring(0, 1000));
 
-    // Extract JSON from response
-    const jsonMatch = content.match(/\{[\s\S]*\}/);
+    // Extract JSON from response (handle potential markdown code blocks)
+    let jsonContent = content;
+    
+    // Remove markdown code blocks if present
+    const codeBlockMatch = content.match(/```(?:json)?\s*([\s\S]*?)```/);
+    if (codeBlockMatch) {
+      jsonContent = codeBlockMatch[1];
+    }
+    
+    // Find JSON object
+    const jsonMatch = jsonContent.match(/\{[\s\S]*\}/);
     if (!jsonMatch) {
-      console.error("No JSON found in AI response");
+      console.error("No JSON found in AI response:", content.substring(0, 500));
       return new Response(
         JSON.stringify({ 
           workHistory: [], 
@@ -238,7 +214,7 @@ Rules:
       endDate: e.endDate || "",
     }));
 
-    console.log(`Parsed ${workHistory.length} work experiences and ${education.length} education entries`);
+    console.log(`Successfully parsed ${workHistory.length} work experiences and ${education.length} education entries`);
 
     return new Response(
       JSON.stringify({
