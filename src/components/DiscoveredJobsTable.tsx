@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect } from "react";
 import { supabase } from "@/lib/supabase";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -64,38 +64,23 @@ export default function DiscoveredJobsTable({ userId }: DiscoveredJobsTableProps
   const [loading, setLoading] = useState(true);
   const [addingJob, setAddingJob] = useState<string | null>(null);
   const [titleSearch, setTitleSearch] = useState("");
+  const [debouncedSearch, setDebouncedSearch] = useState("");
   const [dateFilter, setDateFilter] = useState<DateFilter>("all");
+
+  // Debounce search input
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedSearch(titleSearch);
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [titleSearch]);
 
   useEffect(() => {
     fetchDiscoveredJobs();
-  }, [userId]);
+  }, [userId, debouncedSearch, dateFilter]);
 
-  // Filter jobs based on search and date
-  const filteredJobs = useMemo(() => {
-    return jobs.filter((job) => {
-      // Title/company search filter
-      const searchLower = titleSearch.toLowerCase();
-      const matchesSearch = !titleSearch || 
-        job.title.toLowerCase().includes(searchLower) ||
-        (job.company_slug?.toLowerCase().includes(searchLower)) ||
-        (job.snippet?.toLowerCase().includes(searchLower));
-
-      // Date filter
-      const jobDate = new Date(job.discovered_at);
-      const now = new Date();
-      const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-      const weekAgo = new Date(today.getTime() - 7 * 24 * 60 * 60 * 1000);
-
-      let matchesDate = true;
-      if (dateFilter === "today") {
-        matchesDate = jobDate >= today;
-      } else if (dateFilter === "week") {
-        matchesDate = jobDate >= weekAgo;
-      }
-
-      return matchesSearch && matchesDate;
-    });
-  }, [jobs, titleSearch, dateFilter]);
+  // Jobs are now filtered server-side, so we just use the jobs array directly
+  const filteredJobs = jobs;
 
   const clearFilters = () => {
     setTitleSearch("");
@@ -105,14 +90,35 @@ export default function DiscoveredJobsTable({ userId }: DiscoveredJobsTableProps
   const hasActiveFilters = titleSearch || dateFilter !== "all";
 
   const fetchDiscoveredJobs = async () => {
+    setLoading(true);
     try {
-      const { data, error } = await supabase
+      let query = supabase
         .from("discovered_jobs")
         .select("*")
-        .eq("user_id", userId)
+        .eq("user_id", userId);
+
+      // Apply server-side text search using ilike for title, company_slug, snippet
+      if (debouncedSearch) {
+        const searchPattern = `%${debouncedSearch}%`;
+        query = query.or(`title.ilike.${searchPattern},company_slug.ilike.${searchPattern},snippet.ilike.${searchPattern}`);
+      }
+
+      // Apply date filter
+      if (dateFilter === "today") {
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        query = query.gte("discovered_at", today.toISOString());
+      } else if (dateFilter === "week") {
+        const weekAgo = new Date();
+        weekAgo.setDate(weekAgo.getDate() - 7);
+        weekAgo.setHours(0, 0, 0, 0);
+        query = query.gte("discovered_at", weekAgo.toISOString());
+      }
+
+      const { data, error } = await query
         .order("match_score", { ascending: false, nullsFirst: false })
         .order("discovered_at", { ascending: false })
-        .limit(50);
+        .limit(100);
 
       if (error) throw error;
       setJobs(data || []);
