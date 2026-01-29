@@ -32,14 +32,18 @@ const Dashboard = () => {
 
   // Fetch profile data
   const fetchProfile = async (userId: string) => {
-    const { data, error } = await supabase
-      .from('profiles')
-      .select('resume_url, full_name, target_roles, work_type')
-      .eq('user_id', userId)
-      .single();
-    
-    if (!error && data) {
-      setProfile(data);
+    try {
+      const { data, error } = await supabase
+        .from('profiles')
+        .select('resume_url, full_name, target_roles, work_type')
+        .eq('user_id', userId)
+        .single();
+      
+      if (!error && data) {
+        setProfile(data);
+      }
+    } catch (err) {
+      console.error('Error fetching profile:', err);
     }
   };
 
@@ -74,9 +78,11 @@ const Dashboard = () => {
     setProfile(prev => prev ? { ...prev, resume_url: url } : { resume_url: url, full_name: null, target_roles: null, work_type: null });
   };
 
-  const handlePreferencesSave = () => {
+  const handlePreferencesSave = async () => {
     if (user) {
-      fetchProfile(user.id);
+      // Small delay to ensure DB has committed the changes
+      await new Promise(resolve => setTimeout(resolve, 100));
+      await fetchProfile(user.id);
     }
   };
 
