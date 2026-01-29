@@ -2,11 +2,16 @@ import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "@/lib/supabase";
 import { Button } from "@/components/ui/button";
-import { Crosshair, LogOut, Upload, Settings, BarChart3, Check } from "lucide-react";
+import { Crosshair, LogOut, Upload, Settings, BarChart3, Check, ChevronDown } from "lucide-react";
 import type { User } from "@supabase/supabase-js";
 import ResumeUpload from "@/components/ResumeUpload";
 import JobPreferencesForm from "@/components/JobPreferencesForm";
 import JobApplicationsTable from "@/components/JobApplicationsTable";
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/ui/collapsible";
 
 interface Profile {
   resume_url: string | null;
@@ -136,19 +141,29 @@ const Dashboard = () => {
           )}
         </div>
 
-        {/* Job Preferences Section */}
-        <div className="glass-card border border-white/10 rounded-2xl p-6 mb-8">
-          <h2 className="text-xl font-semibold mb-6 flex items-center gap-2">
-            <Settings className="h-5 w-5 text-primary" />
-            Job Preferences
-          </h2>
-          {user && (
-            <JobPreferencesForm 
-              userId={user.id}
-              onSave={handlePreferencesSave}
-            />
-          )}
-        </div>
+        {/* Job Preferences Section - Collapsible */}
+        <Collapsible className="glass-card border border-white/10 rounded-2xl mb-8">
+          <CollapsibleTrigger className="w-full p-6 flex items-center justify-between hover:bg-white/5 transition-colors rounded-2xl">
+            <h2 className="text-xl font-semibold flex items-center gap-2">
+              <Settings className="h-5 w-5 text-primary" />
+              Job Preferences
+              {hasPreferences && (
+                <span className="ml-2 text-xs font-normal text-muted-foreground bg-primary/20 px-2 py-0.5 rounded-full">
+                  Configured
+                </span>
+              )}
+            </h2>
+            <ChevronDown className="h-5 w-5 text-muted-foreground transition-transform duration-200 [[data-state=open]>&]:rotate-180" />
+          </CollapsibleTrigger>
+          <CollapsibleContent className="px-6 pb-6">
+            {user && (
+              <JobPreferencesForm 
+                userId={user.id}
+                onSave={handlePreferencesSave}
+              />
+            )}
+          </CollapsibleContent>
+        </Collapsible>
 
         {/* Job Applications Section */}
         <div className="glass-card border border-white/10 rounded-2xl p-6 mb-8">
