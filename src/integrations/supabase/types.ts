@@ -118,6 +118,7 @@ export type Database = {
           phone_number: string | null
           resume_url: string | null
           search_radius_miles: number | null
+          skills: string[] | null
           target_roles: string[] | null
           updated_at: string
           user_id: string
@@ -134,6 +135,7 @@ export type Database = {
           phone_number?: string | null
           resume_url?: string | null
           search_radius_miles?: number | null
+          skills?: string[] | null
           target_roles?: string[] | null
           updated_at?: string
           user_id: string
@@ -150,6 +152,7 @@ export type Database = {
           phone_number?: string | null
           resume_url?: string | null
           search_radius_miles?: number | null
+          skills?: string[] | null
           target_roles?: string[] | null
           updated_at?: string
           user_id?: string

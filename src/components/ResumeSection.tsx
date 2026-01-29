@@ -18,6 +18,7 @@ import {
 } from "@/components/ui/tabs";
 import WorkHistoryEditor, { WorkExperience } from "./WorkHistoryEditor";
 import EducationEditor, { Education } from "./EducationEditor";
+import SkillsEditor from "./SkillsEditor";
 
 interface ResumeSectionProps {
   userId: string;
@@ -28,6 +29,7 @@ interface ResumeSectionProps {
 interface ParsedResumeData {
   workHistory: WorkExperience[];
   education: Education[];
+  skills: string[];
 }
 
 export default function ResumeSection({ userId, currentResumeUrl, onUploadComplete }: ResumeSectionProps) {
@@ -40,6 +42,7 @@ export default function ResumeSection({ userId, currentResumeUrl, onUploadComple
   const [loadingPreview, setLoadingPreview] = useState(false);
   const [workHistory, setWorkHistory] = useState<WorkExperience[]>([]);
   const [education, setEducation] = useState<Education[]>([]);
+  const [skills, setSkills] = useState<string[]>([]);
   const [hasChanges, setHasChanges] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const { toast } = useToast();
@@ -53,7 +56,7 @@ export default function ResumeSection({ userId, currentResumeUrl, onUploadComple
     try {
       const { data, error } = await supabase
         .from("profiles")
-        .select("work_history, education")
+        .select("work_history, education, skills")
         .eq("user_id", userId)
         .single();
 
@@ -63,6 +66,9 @@ export default function ResumeSection({ userId, currentResumeUrl, onUploadComple
         }
         if (data.education && Array.isArray(data.education)) {
           setEducation(data.education as unknown as Education[]);
+        }
+        if (data.skills && Array.isArray(data.skills)) {
+          setSkills(data.skills as string[]);
         }
       }
     } catch (err) {
@@ -193,20 +199,23 @@ export default function ResumeSection({ userId, currentResumeUrl, onUploadComple
 
       const parsedWork = data?.workHistory || [];
       const parsedEdu = data?.education || [];
+      const parsedSkills = data?.skills || [];
 
-      console.log(`Parsed ${parsedWork.length} work entries, ${parsedEdu.length} education entries`);
+      console.log(`Parsed ${parsedWork.length} work entries, ${parsedEdu.length} education entries, ${parsedSkills.length} skills`);
 
       // Update state
       setWorkHistory(parsedWork);
       setEducation(parsedEdu);
+      setSkills(parsedSkills);
 
       // Auto-save to database
-      if (parsedWork.length > 0 || parsedEdu.length > 0) {
+      if (parsedWork.length > 0 || parsedEdu.length > 0 || parsedSkills.length > 0) {
         const { error: saveError } = await supabase
           .from("profiles")
           .update({
             work_history: parsedWork,
             education: parsedEdu,
+            skills: parsedSkills,
           })
           .eq("user_id", userId);
 
@@ -219,7 +228,7 @@ export default function ResumeSection({ userId, currentResumeUrl, onUploadComple
           setHasChanges(false);
         }
       } else {
-        sonnerToast.info("No work history or education found. Please add details manually.");
+        sonnerToast.info("No content found. Please add details manually.");
       }
 
     } catch (error: any) {
@@ -239,6 +248,7 @@ export default function ResumeSection({ userId, currentResumeUrl, onUploadComple
         .update({
           work_history: JSON.parse(JSON.stringify(workHistory)),
           education: JSON.parse(JSON.stringify(education)),
+          skills: skills,
         })
         .eq("user_id", userId);
 
@@ -260,6 +270,11 @@ export default function ResumeSection({ userId, currentResumeUrl, onUploadComple
 
   const handleEducationChange = (newEducation: Education[]) => {
     setEducation(newEducation);
+    setHasChanges(true);
+  };
+
+  const handleSkillsChange = (newSkills: string[]) => {
+    setSkills(newSkills);
     setHasChanges(true);
   };
 
@@ -461,19 +476,22 @@ export default function ResumeSection({ userId, currentResumeUrl, onUploadComple
             <Loader2 className="h-5 w-5 text-primary animate-spin" />
             <div>
               <p className="font-medium text-sm">Parsing your resume...</p>
-              <p className="text-xs text-muted-foreground">Extracting work history and education</p>
+              <p className="text-xs text-muted-foreground">Extracting work history, education & skills</p>
             </div>
           </div>
         )}
 
-        {/* Work History & Education Tabs */}
+        {/* Work History, Education & Skills Tabs */}
         <Tabs defaultValue="work" className="w-full">
-          <TabsList className="grid w-full grid-cols-2">
+          <TabsList className="grid w-full grid-cols-3">
             <TabsTrigger value="work">
-              Work History ({workHistory.length})
+              Work ({workHistory.length})
             </TabsTrigger>
             <TabsTrigger value="education">
               Education ({education.length})
+            </TabsTrigger>
+            <TabsTrigger value="skills">
+              Skills ({skills.length})
             </TabsTrigger>
           </TabsList>
           
@@ -488,6 +506,13 @@ export default function ResumeSection({ userId, currentResumeUrl, onUploadComple
             <EducationEditor
               education={education}
               onChange={handleEducationChange}
+            />
+          </TabsContent>
+
+          <TabsContent value="skills" className="mt-4">
+            <SkillsEditor
+              skills={skills}
+              onChange={handleSkillsChange}
             />
           </TabsContent>
         </Tabs>
