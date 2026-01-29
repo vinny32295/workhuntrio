@@ -23,7 +23,27 @@ interface DiscoveredJob {
   match_score: number | null;
   is_reviewed: boolean;
   discovered_at: string;
+  salary_min: number | null;
+  salary_max: number | null;
+  salary_currency: string | null;
 }
+
+const formatSalary = (min: number | null, max: number | null, currency: string | null): string | null => {
+  if (!min && !max) return null;
+  
+  const currencySymbol = currency === 'USD' ? '$' : currency === 'EUR' ? '€' : currency === 'GBP' ? '£' : (currency || '$');
+  const formatNum = (n: number) => {
+    if (n >= 1000) return `${Math.round(n / 1000)}k`;
+    return n.toString();
+  };
+  
+  if (min && max) {
+    return `${currencySymbol}${formatNum(min)} - ${currencySymbol}${formatNum(max)}`;
+  }
+  if (min) return `${currencySymbol}${formatNum(min)}+`;
+  if (max) return `Up to ${currencySymbol}${formatNum(max)}`;
+  return null;
+};
 
 interface DiscoveredJobsTableProps {
   userId: string;
@@ -182,6 +202,7 @@ export default function DiscoveredJobsTable({ userId }: DiscoveredJobsTableProps
             <TableRow className="border-white/10 hover:bg-white/5">
               <TableHead>Job</TableHead>
               <TableHead>Match</TableHead>
+              <TableHead>Salary</TableHead>
               <TableHead>Source</TableHead>
               <TableHead>Discovered</TableHead>
               <TableHead className="text-right">Actions</TableHead>
@@ -226,6 +247,16 @@ export default function DiscoveredJobsTable({ userId }: DiscoveredJobsTableProps
                   ) : (
                     <span className="text-xs text-muted-foreground">—</span>
                   )}
+                </TableCell>
+                <TableCell>
+                  {(() => {
+                    const salary = formatSalary(job.salary_min, job.salary_max, job.salary_currency);
+                    return salary ? (
+                      <span className="text-sm font-medium text-emerald-400">{salary}</span>
+                    ) : (
+                      <span className="text-xs text-muted-foreground">—</span>
+                    );
+                  })()}
                 </TableCell>
                 <TableCell>
                   <Badge className={getATSBadgeColor(job.ats_type)}>
