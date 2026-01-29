@@ -1,23 +1,23 @@
-import { Upload, Brain, Send, CheckCircle } from "lucide-react";
+import { Upload, SlidersHorizontal, Sparkles, CheckCircle } from "lucide-react";
 
 const steps = [
   {
     icon: Upload,
     number: "01",
     title: "Upload Your Resume",
-    description: "Drop in your resume and set your job preferences. Tell us what roles you want and where.",
+    description: "Drop in your resume and we'll extract your skills, experience, and qualifications automatically.",
   },
   {
-    icon: Brain,
+    icon: SlidersHorizontal,
     number: "02",
-    title: "AI Matches Jobs",
-    description: "Our AI scans thousands of jobs daily, finding perfect matches based on your skills and goals.",
+    title: "Set Your Preferences",
+    description: "Choose your target roles, work type (remote, hybrid, or in-person), and location with search radius.",
   },
   {
-    icon: Send,
+    icon: Sparkles,
     number: "03",
-    title: "Auto-Apply & Track",
-    description: "We apply to matched positions with personalized cover letters. Track everything in real-time.",
+    title: "AI Matches & Applies",
+    description: "We score every job against your profile. For strong matches, we craft a custom resume and cover letter, then apply for you.",
   },
 ];
 
