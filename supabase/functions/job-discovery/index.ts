@@ -1,4 +1,5 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { encodeBase64 } from "https://deno.land/std@0.224.0/encoding/base64.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -33,6 +34,19 @@ interface ClassifiedJob {
   snippet: string;
   atsType: string | null;
   companySlug: string | null;
+}
+
+interface ServiceAccountKey {
+  type: string;
+  project_id: string;
+  private_key_id: string;
+  private_key: string;
+  client_email: string;
+  client_id: string;
+  auth_uri: string;
+  token_uri: string;
+  auth_provider_x509_cert_url: string;
+  client_x509_cert_url: string;
 }
 
 // Classify URL by ATS type
@@ -85,20 +99,102 @@ function filterResults(results: SearchResult[]): ClassifiedJob[] {
   return classified;
 }
 
-// Google Custom Search API
+// Create JWT for service account authentication
+async function createServiceAccountJWT(serviceAccount: ServiceAccountKey): Promise<string> {
+  const header = { alg: "RS256", typ: "JWT" };
+  const now = Math.floor(Date.now() / 1000);
+  const payload = {
+    iss: serviceAccount.client_email,
+    sub: serviceAccount.client_email,
+    aud: "https://oauth2.googleapis.com/token",
+    iat: now,
+    exp: now + 3600, // 1 hour
+    scope: "https://www.googleapis.com/auth/cse",
+  };
+
+  const headerB64 = base64UrlEncode(JSON.stringify(header));
+  const payloadB64 = base64UrlEncode(JSON.stringify(payload));
+  const unsignedToken = `${headerB64}.${payloadB64}`;
+
+  // Import the private key
+  const pemKey = serviceAccount.private_key;
+  const pemContents = pemKey
+    .replace(/-----BEGIN PRIVATE KEY-----/, "")
+    .replace(/-----END PRIVATE KEY-----/, "")
+    .replace(/\n/g, "");
+  
+  const binaryKey = Uint8Array.from(atob(pemContents), c => c.charCodeAt(0));
+  
+  const cryptoKey = await crypto.subtle.importKey(
+    "pkcs8",
+    binaryKey,
+    { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" },
+    false,
+    ["sign"]
+  );
+
+  // Sign the token
+  const signature = await crypto.subtle.sign(
+    "RSASSA-PKCS1-v1_5",
+    cryptoKey,
+    new TextEncoder().encode(unsignedToken)
+  );
+
+  const signatureB64 = base64UrlEncode(new Uint8Array(signature));
+  return `${unsignedToken}.${signatureB64}`;
+}
+
+// Base64 URL encode helper
+function base64UrlEncode(data: string | Uint8Array): string {
+  let base64: string;
+  if (typeof data === "string") {
+    base64 = btoa(data);
+  } else {
+    base64 = encodeBase64(data);
+  }
+  return base64.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
+// Get access token using service account
+async function getAccessToken(serviceAccount: ServiceAccountKey): Promise<string> {
+  const jwt = await createServiceAccountJWT(serviceAccount);
+  
+  const response = await fetch("https://oauth2.googleapis.com/token", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      grant_type: "urn:ietf:params:oauth:grant-type:jwt-bearer",
+      assertion: jwt,
+    }),
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    console.error("Token exchange error:", errorText);
+    throw new Error(`Failed to get access token: ${response.status}`);
+  }
+
+  const data = await response.json();
+  return data.access_token;
+}
+
+// Google Custom Search API with service account
 async function googleSearch(
   query: string,
-  apiKey: string,
+  accessToken: string,
   cseId: string,
   numResults: number = 10
 ): Promise<SearchResult[]> {
   const url = new URL("https://www.googleapis.com/customsearch/v1");
-  url.searchParams.set("key", apiKey);
   url.searchParams.set("cx", cseId);
   url.searchParams.set("q", query);
   url.searchParams.set("num", String(Math.min(numResults, 10)));
   
-  const response = await fetch(url.toString());
+  const response = await fetch(url.toString(), {
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+    },
+  });
   
   if (!response.ok) {
     const errorText = await response.text();
@@ -147,13 +243,32 @@ Deno.serve(async (req) => {
   }
 
   try {
-    // Get API keys from environment
-    const googleApiKey = Deno.env.get("GOOGLE_API_KEY");
+    // Get service account JSON from environment
+    const serviceAccountJson = Deno.env.get("GOOGLE_SERVICE_ACCOUNT_JSON");
     const googleCseId = Deno.env.get("GOOGLE_CSE_ID");
     
-    if (!googleApiKey || !googleCseId) {
+    if (!serviceAccountJson) {
       return new Response(
-        JSON.stringify({ error: "Google API credentials not configured" }),
+        JSON.stringify({ error: "Google service account not configured" }),
+        { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+    
+    if (!googleCseId) {
+      return new Response(
+        JSON.stringify({ error: "Google CSE ID not configured" }),
+        { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+    
+    // Parse service account
+    let serviceAccount: ServiceAccountKey;
+    try {
+      serviceAccount = JSON.parse(serviceAccountJson);
+    } catch (e) {
+      console.error("Failed to parse service account JSON:", e);
+      return new Response(
+        JSON.stringify({ error: "Invalid service account JSON format" }),
         { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
@@ -187,6 +302,11 @@ Deno.serve(async (req) => {
     
     const userId = claimsData.claims.sub as string;
     
+    // Get access token from service account
+    console.log("Getting access token from service account...");
+    const accessToken = await getAccessToken(serviceAccount);
+    console.log("Access token obtained successfully");
+    
     // Get user preferences
     const { data: profile } = await supabase
       .from("profiles")
@@ -204,7 +324,7 @@ Deno.serve(async (req) => {
     for (const query of queries) {
       try {
         console.log(`Searching: ${query}`);
-        const results = await googleSearch(query, googleApiKey, googleCseId, 10);
+        const results = await googleSearch(query, accessToken, googleCseId, 10);
         allResults.push(...results);
         
         // Rate limit: wait 500ms between requests
