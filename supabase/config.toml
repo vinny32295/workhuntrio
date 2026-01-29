@@ -1,1 +1,4 @@
 project_id = "ejnqypkykyuguovunrsi"
+
+[functions.job-discovery]
+verify_jwt = false

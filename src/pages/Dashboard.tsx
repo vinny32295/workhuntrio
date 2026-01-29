@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "@/lib/supabase";
 import { Button } from "@/components/ui/button";
@@ -8,6 +8,7 @@ import ResumeUpload from "@/components/ResumeUpload";
 import JobPreferencesForm from "@/components/JobPreferencesForm";
 import JobApplicationsTable from "@/components/JobApplicationsTable";
 import DiscoveredJobsTable from "@/components/DiscoveredJobsTable";
+import StartHuntButton from "@/components/StartHuntButton";
 import {
   Collapsible,
   CollapsibleContent,
@@ -25,6 +26,7 @@ const Dashboard = () => {
   const [user, setUser] = useState<User | null>(null);
   const [profile, setProfile] = useState<Profile | null>(null);
   const [loading, setLoading] = useState(true);
+  const [discoveredJobsKey, setDiscoveredJobsKey] = useState(0);
   const navigate = useNavigate();
 
   // Fetch profile data
@@ -78,6 +80,11 @@ const Dashboard = () => {
   };
 
   const hasPreferences = profile?.target_roles && profile.target_roles.length > 0 && profile.work_type;
+
+  const handleHuntComplete = () => {
+    // Refresh discovered jobs table
+    setDiscoveredJobsKey(prev => prev + 1);
+  };
 
   const handleSignOut = async () => {
     await supabase.auth.signOut();
@@ -166,6 +173,24 @@ const Dashboard = () => {
           </CollapsibleContent>
         </Collapsible>
 
+        {/* Start Hunt Section */}
+        <div className="glass-card border border-white/10 rounded-2xl p-6 mb-8 bg-gradient-to-r from-primary/5 to-transparent">
+          <h2 className="text-xl font-semibold mb-4 flex items-center gap-2">
+            <Crosshair className="h-5 w-5 text-primary" />
+            Job Discovery
+          </h2>
+          <p className="text-muted-foreground mb-6">
+            Search the web for jobs matching your preferences using Google Custom Search.
+          </p>
+          {user && (
+            <StartHuntButton
+              userId={user.id}
+              hasPreferences={!!hasPreferences}
+              onComplete={handleHuntComplete}
+            />
+          )}
+        </div>
+
         {/* Discovered Jobs Section */}
         <div className="glass-card border border-white/10 rounded-2xl p-6 mb-8">
           <h2 className="text-xl font-semibold mb-6 flex items-center gap-2">
@@ -173,7 +198,7 @@ const Dashboard = () => {
             Discovered Jobs
           </h2>
           {user && (
-            <DiscoveredJobsTable userId={user.id} />
+            <DiscoveredJobsTable key={discoveredJobsKey} userId={user.id} />
           )}
         </div>
 
