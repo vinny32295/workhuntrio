@@ -95,7 +95,7 @@ Extract and return a JSON object with:
       "title": "Job Title",
       "startDate": "Mon YYYY",
       "endDate": "Mon YYYY or Present",
-      "description": "Brief description of responsibilities and achievements"
+      "description": "• First bullet point\\n• Second bullet point\\n• Third bullet point"
     }
   ],
   "education": [
@@ -113,7 +113,9 @@ Extract and return a JSON object with:
 
 Rules:
 - Generate unique IDs for each entry (use format like "work-1", "work-2", "edu-1", etc.)
-- Keep descriptions concise (1-2 sentences max)
+- IMPORTANT: For work history descriptions, include ALL bullet points from the resume, not just the first one
+- Format bullet points with "• " prefix and separate with newlines (\\n)
+- Preserve the full content of each bullet point
 - Use "Present" for current positions
 - If dates are unclear, use approximate dates
 - Extract ALL skills mentioned: technical skills, tools, languages, frameworks, soft skills
