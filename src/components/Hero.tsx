@@ -30,14 +30,14 @@ const Hero = () => {
           
           {/* Headline */}
           <h1 className="text-5xl md:text-7xl font-bold leading-tight mb-6 animate-fade-in" style={{ animationDelay: '0.1s' }}>
-            Your dream job,
+            Upload once.
             <br />
-            <span className="text-gradient animate-gradient">hunted automatically</span>
+            <span className="text-gradient animate-gradient">We apply everywhere.</span>
           </h1>
           
           {/* Subheadline */}
           <p className="text-xl md:text-2xl text-muted-foreground max-w-2xl mx-auto mb-10 animate-fade-in" style={{ animationDelay: '0.2s' }}>
-            Stop spending hours applying. Let our AI find, match, and apply to jobs that fit your skills—while you sleep.
+            Drop your resume, set your preferences, and let AI apply to hundreds of jobs with custom resumes and cover letters—automatically.
           </p>
           
           {/* CTA Buttons */}
