@@ -5,10 +5,13 @@ import { Button } from "@/components/ui/button";
 import { Crosshair, LogOut, Upload, Settings, BarChart3, Check } from "lucide-react";
 import type { User } from "@supabase/supabase-js";
 import ResumeUpload from "@/components/ResumeUpload";
+import JobPreferencesForm from "@/components/JobPreferencesForm";
 
 interface Profile {
   resume_url: string | null;
   full_name: string | null;
+  target_roles: string[] | null;
+  work_type: string | null;
 }
 
 const Dashboard = () => {
@@ -21,7 +24,7 @@ const Dashboard = () => {
   const fetchProfile = async (userId: string) => {
     const { data, error } = await supabase
       .from('profiles')
-      .select('resume_url, full_name')
+      .select('resume_url, full_name, target_roles, work_type')
       .eq('user_id', userId)
       .single();
     
@@ -58,8 +61,16 @@ const Dashboard = () => {
   }, [navigate]);
 
   const handleResumeUpload = (url: string) => {
-    setProfile(prev => prev ? { ...prev, resume_url: url } : { resume_url: url, full_name: null });
+    setProfile(prev => prev ? { ...prev, resume_url: url } : { resume_url: url, full_name: null, target_roles: null, work_type: null });
   };
+
+  const handlePreferencesSave = () => {
+    if (user) {
+      fetchProfile(user.id);
+    }
+  };
+
+  const hasPreferences = profile?.target_roles && profile.target_roles.length > 0 && profile.work_type;
 
   const handleSignOut = async () => {
     await supabase.auth.signOut();
@@ -124,23 +135,27 @@ const Dashboard = () => {
           )}
         </div>
 
-        {/* Quick actions */}
-        <div className="grid md:grid-cols-2 gap-6 mb-12">
-          <div className="glass-card border border-white/10 rounded-2xl p-6 hover:border-primary/30 transition-colors cursor-pointer">
-            <Settings className="h-8 w-8 text-primary mb-4" />
-            <h3 className="text-lg font-semibold mb-2">Set Preferences</h3>
-            <p className="text-sm text-muted-foreground">
-              Define your target roles, location, and work type
-            </p>
-          </div>
+        {/* Job Preferences Section */}
+        <div className="glass-card border border-white/10 rounded-2xl p-6 mb-8">
+          <h2 className="text-xl font-semibold mb-6 flex items-center gap-2">
+            <Settings className="h-5 w-5 text-primary" />
+            Job Preferences
+          </h2>
+          {user && (
+            <JobPreferencesForm 
+              userId={user.id}
+              onSave={handlePreferencesSave}
+            />
+          )}
+        </div>
 
-          <div className="glass-card border border-white/10 rounded-2xl p-6 hover:border-primary/30 transition-colors cursor-pointer">
-            <BarChart3 className="h-8 w-8 text-primary mb-4" />
-            <h3 className="text-lg font-semibold mb-2">View Applications</h3>
-            <p className="text-sm text-muted-foreground">
-              Track all your auto-applications in one place
-            </p>
-          </div>
+        {/* Quick action - View Applications */}
+        <div className="glass-card border border-white/10 rounded-2xl p-6 hover:border-primary/30 transition-colors cursor-pointer mb-8">
+          <BarChart3 className="h-8 w-8 text-primary mb-4" />
+          <h3 className="text-lg font-semibold mb-2">View Applications</h3>
+          <p className="text-sm text-muted-foreground">
+            Track all your auto-applications in one place
+          </p>
         </div>
 
         {/* Status card */}
@@ -149,10 +164,10 @@ const Dashboard = () => {
           <div className="space-y-4">
             <div className="flex items-center gap-4">
               <div className={`w-8 h-8 rounded-full flex items-center justify-center ${
-                profile?.resume_url ? 'bg-green-500/20' : 'bg-primary/20'
+                profile?.resume_url ? 'bg-emerald-500/20' : 'bg-primary/20'
               }`}>
                 {profile?.resume_url ? (
-                  <Check className="h-4 w-4 text-green-500" />
+                  <Check className="h-4 w-4 text-emerald-500" />
                 ) : (
                   <span className="text-primary font-bold">1</span>
                 )}
@@ -162,14 +177,24 @@ const Dashboard = () => {
               </span>
             </div>
             <div className="flex items-center gap-4">
-              <div className="w-8 h-8 rounded-full bg-white/10 flex items-center justify-center text-muted-foreground font-bold">
-                2
+              <div className={`w-8 h-8 rounded-full flex items-center justify-center ${
+                hasPreferences ? 'bg-emerald-500/20' : 'bg-muted/50'
+              }`}>
+                {hasPreferences ? (
+                  <Check className="h-4 w-4 text-emerald-500" />
+                ) : (
+                  <span className="text-muted-foreground font-bold">2</span>
+                )}
               </div>
-              <span className="text-muted-foreground">Set your job preferences</span>
+              <span className={hasPreferences ? 'text-foreground line-through' : 'text-muted-foreground'}>
+                Set your job preferences
+              </span>
             </div>
             <div className="flex items-center gap-4">
-              <div className="w-8 h-8 rounded-full bg-white/10 flex items-center justify-center text-muted-foreground font-bold">
-                3
+              <div className={`w-8 h-8 rounded-full flex items-center justify-center ${
+                profile?.resume_url && hasPreferences ? 'bg-primary/20' : 'bg-muted/50'
+              }`}>
+                <span className={`font-bold ${profile?.resume_url && hasPreferences ? 'text-primary' : 'text-muted-foreground'}`}>3</span>
               </div>
               <span className="text-muted-foreground">Let WorkHuntr apply for you</span>
             </div>
