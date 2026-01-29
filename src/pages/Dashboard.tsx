@@ -2,10 +2,11 @@ import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "@/lib/supabase";
 import { Button } from "@/components/ui/button";
-import { Crosshair, LogOut, Upload, Settings, BarChart3, Check, ChevronDown, Search, Sparkles } from "lucide-react";
-import type { User } from "@supabase/supabase-js";
+import { Crosshair, LogOut, Upload, Settings, BarChart3, Check, ChevronDown, Search, User } from "lucide-react";
+import type { User as SupabaseUser } from "@supabase/supabase-js";
 import ResumeUpload from "@/components/ResumeUpload";
 import JobPreferencesForm from "@/components/JobPreferencesForm";
+import ProfileInfoForm from "@/components/ProfileInfoForm";
 import JobApplicationsTable from "@/components/JobApplicationsTable";
 import DiscoveredJobsTable from "@/components/DiscoveredJobsTable";
 import StartHuntButton from "@/components/StartHuntButton";
@@ -21,10 +22,11 @@ interface Profile {
   full_name: string | null;
   target_roles: string[] | null;
   work_type: string | null;
+  phone_number: string | null;
 }
 
 const Dashboard = () => {
-  const [user, setUser] = useState<User | null>(null);
+  const [user, setUser] = useState<SupabaseUser | null>(null);
   const [profile, setProfile] = useState<Profile | null>(null);
   const [loading, setLoading] = useState(true);
   const [discoveredJobsKey, setDiscoveredJobsKey] = useState(0);
@@ -35,7 +37,7 @@ const Dashboard = () => {
     try {
       const { data, error } = await supabase
         .from('profiles')
-        .select('resume_url, full_name, target_roles, work_type')
+        .select('resume_url, full_name, target_roles, work_type, phone_number')
         .eq('user_id', userId)
         .single();
       
@@ -75,8 +77,10 @@ const Dashboard = () => {
   }, [navigate]);
 
   const handleResumeUpload = (url: string) => {
-    setProfile(prev => prev ? { ...prev, resume_url: url } : { resume_url: url, full_name: null, target_roles: null, work_type: null });
+    setProfile(prev => prev ? { ...prev, resume_url: url } : { resume_url: url, full_name: null, target_roles: null, work_type: null, phone_number: null });
   };
+
+  const hasProfileInfo = profile?.full_name && profile?.full_name.trim() !== "";
 
   const handlePreferencesSave = async () => {
     if (user) {
@@ -155,6 +159,30 @@ const Dashboard = () => {
             />
           )}
         </div>
+
+        {/* Profile Info Section - Collapsible */}
+        <Collapsible className="glass-card border border-white/10 rounded-2xl mb-8">
+          <CollapsibleTrigger className="w-full p-6 flex items-center justify-between hover:bg-white/5 transition-colors rounded-2xl">
+            <h2 className="text-xl font-semibold flex items-center gap-2">
+              <User className="h-5 w-5 text-primary" />
+              Profile Information
+              {hasProfileInfo && (
+                <span className="ml-2 text-xs font-normal text-muted-foreground bg-primary/20 px-2 py-0.5 rounded-full">
+                  Configured
+                </span>
+              )}
+            </h2>
+            <ChevronDown className="h-5 w-5 text-muted-foreground transition-transform duration-200 [[data-state=open]>&]:rotate-180" />
+          </CollapsibleTrigger>
+          <CollapsibleContent className="px-6 pb-6">
+            {user && (
+              <ProfileInfoForm 
+                userId={user.id}
+                onSave={handlePreferencesSave}
+              />
+            )}
+          </CollapsibleContent>
+        </Collapsible>
 
         {/* Job Preferences Section - Collapsible */}
         <Collapsible className="glass-card border border-white/10 rounded-2xl mb-8">
