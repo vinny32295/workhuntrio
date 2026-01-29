@@ -1,7 +1,15 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { supabase } from "@/lib/supabase";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Input } from "@/components/ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import {
   Table,
   TableBody,
@@ -10,7 +18,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { ExternalLink, Plus, Check, Loader2, Search } from "lucide-react";
+import { ExternalLink, Plus, Check, Loader2, Search, Filter, X } from "lucide-react";
 import { toast } from "sonner";
 
 interface DiscoveredJob {
@@ -49,14 +57,52 @@ interface DiscoveredJobsTableProps {
   userId: string;
 }
 
+type DateFilter = "all" | "today" | "week";
+
 export default function DiscoveredJobsTable({ userId }: DiscoveredJobsTableProps) {
   const [jobs, setJobs] = useState<DiscoveredJob[]>([]);
   const [loading, setLoading] = useState(true);
   const [addingJob, setAddingJob] = useState<string | null>(null);
+  const [titleSearch, setTitleSearch] = useState("");
+  const [dateFilter, setDateFilter] = useState<DateFilter>("all");
 
   useEffect(() => {
     fetchDiscoveredJobs();
   }, [userId]);
+
+  // Filter jobs based on search and date
+  const filteredJobs = useMemo(() => {
+    return jobs.filter((job) => {
+      // Title/company search filter
+      const searchLower = titleSearch.toLowerCase();
+      const matchesSearch = !titleSearch || 
+        job.title.toLowerCase().includes(searchLower) ||
+        (job.company_slug?.toLowerCase().includes(searchLower)) ||
+        (job.snippet?.toLowerCase().includes(searchLower));
+
+      // Date filter
+      const jobDate = new Date(job.discovered_at);
+      const now = new Date();
+      const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+      const weekAgo = new Date(today.getTime() - 7 * 24 * 60 * 60 * 1000);
+
+      let matchesDate = true;
+      if (dateFilter === "today") {
+        matchesDate = jobDate >= today;
+      } else if (dateFilter === "week") {
+        matchesDate = jobDate >= weekAgo;
+      }
+
+      return matchesSearch && matchesDate;
+    });
+  }, [jobs, titleSearch, dateFilter]);
+
+  const clearFilters = () => {
+    setTitleSearch("");
+    setDateFilter("all");
+  };
+
+  const hasActiveFilters = titleSearch || dateFilter !== "all";
 
   const fetchDiscoveredJobs = async () => {
     try {
@@ -158,7 +204,7 @@ export default function DiscoveredJobsTable({ userId }: DiscoveredJobsTableProps
     return "text-muted-foreground";
   };
 
-  const unreviewedCount = jobs.filter(j => !j.is_reviewed).length;
+  const unreviewedCount = filteredJobs.filter(j => !j.is_reviewed).length;
 
   if (loading) {
     return (
@@ -174,42 +220,84 @@ export default function DiscoveredJobsTable({ userId }: DiscoveredJobsTableProps
         <Search className="h-12 w-12 mx-auto text-muted-foreground mb-4" />
         <h3 className="text-lg font-medium mb-2">No discovered jobs yet</h3>
         <p className="text-muted-foreground text-sm max-w-md mx-auto">
-          Run the job discovery script to find matching opportunities:
+          Click "Start Hunt" above to find matching job opportunities.
         </p>
-        <code className="block mt-4 p-3 bg-muted/50 rounded-lg text-sm font-mono">
-          python push_to_supabase.py --discover --user-id {userId}
-        </code>
       </div>
     );
   }
 
   return (
     <div>
-      {unreviewedCount > 0 && (
-        <div className="mb-4 flex items-center gap-2">
+      {/* Filters */}
+      <div className="mb-4 flex flex-col sm:flex-row gap-3">
+        <div className="relative flex-1">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+          <Input
+            placeholder="Search by title, company, or keywords..."
+            value={titleSearch}
+            onChange={(e) => setTitleSearch(e.target.value)}
+            className="pl-9"
+          />
+        </div>
+        <Select value={dateFilter} onValueChange={(v) => setDateFilter(v as DateFilter)}>
+          <SelectTrigger className="w-full sm:w-[140px]">
+            <Filter className="h-4 w-4 mr-2" />
+            <SelectValue placeholder="Date" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All time</SelectItem>
+            <SelectItem value="today">Today</SelectItem>
+            <SelectItem value="week">This week</SelectItem>
+          </SelectContent>
+        </Select>
+        {hasActiveFilters && (
+          <Button variant="ghost" size="sm" onClick={clearFilters} className="gap-1">
+            <X className="h-4 w-4" />
+            Clear
+          </Button>
+        )}
+      </div>
+
+      {/* Results count */}
+      <div className="mb-4 flex items-center gap-2">
+        {unreviewedCount > 0 && (
           <Badge variant="secondary" className="bg-primary/20 text-primary">
             {unreviewedCount} new
           </Badge>
-          <span className="text-sm text-muted-foreground">
-            jobs discovered and waiting for review
-          </span>
-        </div>
-      )}
+        )}
+        <span className="text-sm text-muted-foreground">
+          {filteredJobs.length === jobs.length
+            ? `${jobs.length} jobs discovered`
+            : `Showing ${filteredJobs.length} of ${jobs.length} jobs`}
+        </span>
+      </div>
 
-      <div className="rounded-lg border border-white/10 overflow-hidden">
-        <Table>
-          <TableHeader>
-            <TableRow className="border-white/10 hover:bg-white/5">
-              <TableHead>Job</TableHead>
-              <TableHead>Match</TableHead>
-              <TableHead>Salary</TableHead>
-              <TableHead>Source</TableHead>
-              <TableHead>Discovered</TableHead>
-              <TableHead className="text-right">Actions</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {jobs.map((job) => (
+      {filteredJobs.length === 0 ? (
+        <div className="text-center py-12 border border-white/10 rounded-lg">
+          <Filter className="h-12 w-12 mx-auto text-muted-foreground mb-4" />
+          <h3 className="text-lg font-medium mb-2">No matching jobs</h3>
+          <p className="text-muted-foreground text-sm">
+            Try adjusting your search or filters
+          </p>
+          <Button variant="link" onClick={clearFilters} className="mt-2">
+            Clear all filters
+          </Button>
+        </div>
+      ) : (
+        <div className="rounded-lg border border-white/10 overflow-hidden">
+          <Table>
+            <TableHeader>
+              <TableRow className="border-white/10 hover:bg-white/5">
+                <TableHead>Job</TableHead>
+                <TableHead>Match</TableHead>
+                <TableHead>Salary</TableHead>
+                <TableHead>Source</TableHead>
+                <TableHead>Discovered</TableHead>
+                <TableHead className="text-right">Actions</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {filteredJobs.map((job) => (
               <TableRow 
                 key={job.id} 
                 className={`border-white/10 hover:bg-white/5 ${
@@ -302,9 +390,10 @@ export default function DiscoveredJobsTable({ userId }: DiscoveredJobsTableProps
                 </TableCell>
               </TableRow>
             ))}
-          </TableBody>
-        </Table>
-      </div>
+            </TableBody>
+          </Table>
+        </div>
+      )}
     </div>
   );
 }
