@@ -14,9 +14,13 @@ interface HuntResult {
   success: boolean;
   queriesRun: number;
   totalResults: number;
-  relevantJobs: number;
+  boardPagesScraped?: number;
+  extractedJobLinks?: number;
+  enrichedJobs?: number;
   inserted: number;
   skipped: number;
+  withSalary?: number;
+  withDescription?: number;
   error?: string;
 }
 
@@ -53,7 +57,8 @@ export default function StartHuntButton({ userId, hasPreferences, onComplete }: 
 
       if (data?.success) {
         setLastResult(data);
-        toast.success(`Found ${data.relevantJobs} matching jobs!`);
+        const jobCount = data.enrichedJobs || data.inserted || 0;
+        toast.success(`Found ${jobCount} matching jobs with full details!`);
         onComplete();
       } else {
         throw new Error(data?.error || "Hunt failed");
@@ -101,8 +106,10 @@ export default function StartHuntButton({ userId, hasPreferences, onComplete }: 
             Hunt completed!
           </p>
           <p className="text-muted-foreground">
-            Searched {lastResult.queriesRun} queries • Found {lastResult.totalResults} results • 
-            {lastResult.relevantJobs} relevant jobs • {lastResult.inserted} new
+            Searched {lastResult.queriesRun} queries • Scraped {lastResult.boardPagesScraped || 0} job boards • 
+            Extracted {lastResult.extractedJobLinks || 0} job links • {lastResult.inserted} new jobs saved
+            {lastResult.withDescription ? ` • ${lastResult.withDescription} with full descriptions` : ""}
+            {lastResult.withSalary ? ` • ${lastResult.withSalary} with salary info` : ""}
           </p>
         </div>
       )}
