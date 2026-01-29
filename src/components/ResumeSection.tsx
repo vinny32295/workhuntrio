@@ -174,6 +174,8 @@ export default function ResumeSection({ userId, currentResumeUrl, onUploadComple
         new Uint8Array(arrayBuffer).reduce((data, byte) => data + String.fromCharCode(byte), '')
       );
 
+      console.log("Calling parse-resume function...");
+
       const { data, error } = await supabase.functions.invoke("parse-resume", {
         body: {
           fileBase64: base64,
@@ -185,17 +187,40 @@ export default function ResumeSection({ userId, currentResumeUrl, onUploadComple
         },
       });
 
+      console.log("Parse response:", data, error);
+
       if (error) throw error;
 
-      if (data?.workHistory) {
-        setWorkHistory(data.workHistory);
-      }
-      if (data?.education) {
-        setEducation(data.education);
-      }
+      const parsedWork = data?.workHistory || [];
+      const parsedEdu = data?.education || [];
 
-      sonnerToast.success("Resume parsed successfully! Review and edit your details below.");
-      setHasChanges(true);
+      console.log(`Parsed ${parsedWork.length} work entries, ${parsedEdu.length} education entries`);
+
+      // Update state
+      setWorkHistory(parsedWork);
+      setEducation(parsedEdu);
+
+      // Auto-save to database
+      if (parsedWork.length > 0 || parsedEdu.length > 0) {
+        const { error: saveError } = await supabase
+          .from("profiles")
+          .update({
+            work_history: parsedWork,
+            education: parsedEdu,
+          })
+          .eq("user_id", userId);
+
+        if (saveError) {
+          console.error("Auto-save error:", saveError);
+          sonnerToast.success("Resume parsed! Click Save to keep your changes.");
+          setHasChanges(true);
+        } else {
+          sonnerToast.success("Resume parsed and saved successfully!");
+          setHasChanges(false);
+        }
+      } else {
+        sonnerToast.info("No work history or education found. Please add details manually.");
+      }
 
     } catch (error: any) {
       console.error("Parse error:", error);
