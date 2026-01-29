@@ -125,27 +125,70 @@ async function serpApiSearch(
   }));
 }
 
+// US ZIP code to city/state mapping for common areas
+const ZIP_TO_LOCATION: Record<string, string> = {
+  "37": "Tennessee",
+  "30": "Georgia Atlanta",
+  "10": "New York NYC",
+  "90": "Los Angeles California",
+  "94": "San Francisco Bay Area",
+  "98": "Seattle Washington",
+  "60": "Chicago Illinois",
+  "02": "Boston Massachusetts",
+  "78": "Texas Austin",
+  "75": "Dallas Texas",
+  "33": "Florida Miami",
+  "20": "Washington DC",
+  "80": "Denver Colorado",
+  "85": "Phoenix Arizona",
+};
+
+function getLocationFromZip(zip: string | null): string | null {
+  if (!zip || zip.length < 2) return null;
+  const prefix = zip.substring(0, 2);
+  return ZIP_TO_LOCATION[prefix] || null;
+}
+
 // Build search queries from user preferences
 function buildSearchQueries(preferences: {
   target_roles: string[] | null;
   work_type: string | null;
+  location_zip: string | null;
 }): string[] {
   const queries: string[] = [];
   const roles = preferences.target_roles || ["product manager", "operations manager"];
   const workType = preferences.work_type || "remote";
+  const location = getLocationFromZip(preferences.location_zip);
+  
+  // For in-person or hybrid, include location in searches
+  const locationTerm = (workType === "in-person" || workType === "hybrid") && location 
+    ? location 
+    : "";
   
   for (const role of roles.slice(0, 3)) {
-    // ATS-specific searches (most reliable)
-    queries.push(`site:boards.greenhouse.io ${workType} ${role}`);
-    queries.push(`site:jobs.lever.co ${workType} ${role}`);
-    
-    // General job search
-    queries.push(`${workType} "${role}" jobs hiring 2026`);
+    if (workType === "remote") {
+      // Remote searches - no location needed
+      queries.push(`site:boards.greenhouse.io remote ${role}`);
+      queries.push(`site:jobs.lever.co remote ${role}`);
+      queries.push(`remote "${role}" jobs hiring 2026`);
+    } else {
+      // In-person/hybrid - include location
+      queries.push(`site:boards.greenhouse.io ${locationTerm} ${role}`);
+      queries.push(`site:jobs.lever.co ${locationTerm} ${role}`);
+      queries.push(`"${role}" jobs ${locationTerm} hiring 2026`);
+      // Also search with work type keyword
+      queries.push(`${workType} "${role}" jobs ${locationTerm}`);
+    }
   }
   
-  // Add some broad ATS searches
-  queries.push(`site:apply.workable.com ${workType} manager`);
-  queries.push(`site:jobs.ashbyhq.com ${workType}`);
+  // Add some broad ATS searches with location if applicable
+  if (locationTerm) {
+    queries.push(`site:apply.workable.com ${locationTerm} manager`);
+    queries.push(`site:jobs.ashbyhq.com ${locationTerm}`);
+  } else {
+    queries.push(`site:apply.workable.com ${workType} manager`);
+    queries.push(`site:jobs.ashbyhq.com ${workType}`);
+  }
   
   return queries;
 }
@@ -280,11 +323,13 @@ Deno.serve(async (req) => {
     // Get user preferences
     const { data: profile } = await supabase
       .from("profiles")
-      .select("target_roles, work_type")
+      .select("target_roles, work_type, location_zip")
       .eq("user_id", userId)
       .single();
     
-    const queries = buildSearchQueries(profile || { target_roles: null, work_type: null });
+    const queries = buildSearchQueries(profile || { target_roles: null, work_type: null, location_zip: null });
+    
+    console.log(`User preferences: work_type=${profile?.work_type}, location_zip=${profile?.location_zip}`);
     
     console.log(`Running ${queries.length} search queries for user ${userId}`);
     
