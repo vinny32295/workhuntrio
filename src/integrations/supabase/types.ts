@@ -114,6 +114,7 @@ export type Database = {
           full_name: string | null
           id: string
           location_zip: string | null
+          phone_number: string | null
           resume_url: string | null
           search_radius_miles: number | null
           target_roles: string[] | null
@@ -127,6 +128,7 @@ export type Database = {
           full_name?: string | null
           id?: string
           location_zip?: string | null
+          phone_number?: string | null
           resume_url?: string | null
           search_radius_miles?: number | null
           target_roles?: string[] | null
@@ -140,6 +142,7 @@ export type Database = {
           full_name?: string | null
           id?: string
           location_zip?: string | null
+          phone_number?: string | null
           resume_url?: string | null
           search_radius_miles?: number | null
           target_roles?: string[] | null
