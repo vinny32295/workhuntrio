@@ -18,8 +18,9 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { ExternalLink, Plus, Check, Loader2, Search, Filter, X } from "lucide-react";
+import { ExternalLink, Plus, Check, Loader2, Search, Filter, X, Sparkles } from "lucide-react";
 import { toast } from "sonner";
+import TailorResumeDialog from "./TailorResumeDialog";
 
 interface DiscoveredJob {
   id: string;
@@ -66,6 +67,8 @@ export default function DiscoveredJobsTable({ userId }: DiscoveredJobsTableProps
   const [titleSearch, setTitleSearch] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
   const [dateFilter, setDateFilter] = useState<DateFilter>("all");
+  const [tailorDialogOpen, setTailorDialogOpen] = useState(false);
+  const [selectedJob, setSelectedJob] = useState<DiscoveredJob | null>(null);
 
   // Debounce search input
   useEffect(() => {
@@ -361,7 +364,18 @@ export default function DiscoveredJobsTable({ userId }: DiscoveredJobsTableProps
                   {new Date(job.discovered_at).toLocaleDateString()}
                 </TableCell>
                 <TableCell className="text-right">
-                  <div className="flex items-center justify-end gap-2">
+                  <div className="flex items-center justify-end gap-1">
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => {
+                        setSelectedJob(job);
+                        setTailorDialogOpen(true);
+                      }}
+                      title="Tailor resume & cover letter"
+                    >
+                      <Sparkles className="h-4 w-4 text-primary" />
+                    </Button>
                     <Button
                       variant="ghost"
                       size="sm"
@@ -400,6 +414,12 @@ export default function DiscoveredJobsTable({ userId }: DiscoveredJobsTableProps
           </Table>
         </div>
       )}
+
+      <TailorResumeDialog
+        open={tailorDialogOpen}
+        onOpenChange={setTailorDialogOpen}
+        job={selectedJob}
+      />
     </div>
   );
 }
