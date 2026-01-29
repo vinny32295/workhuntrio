@@ -47,7 +47,6 @@ function escapeHtml(text: string | null | undefined): string {
 function formatBulletPoints(description: string | null | undefined): string {
   if (!description) return '';
   
-  // Split by bullet points or newlines
   const lines = description
     .split(/[\n•]/g)
     .map(line => line.trim())
@@ -58,72 +57,7 @@ function formatBulletPoints(description: string | null | undefined): string {
   return lines.map(line => `<li>${escapeHtml(line)}</li>`).join('\n');
 }
 
-function generateResumeHTML(profile: ProfileData, tailoredSummary?: string): string {
-  const name = profile.full_name || 'Your Name';
-  const email = profile.email || '';
-  const phone = profile.phone_number || '';
-  const location = profile.location_zip || '';
-  
-  const contactParts = [email, phone, location].filter(Boolean);
-  const contactLine = contactParts.join(' | ');
-  
-  // Work Experience HTML
-  let workExperienceHTML = '';
-  if (profile.work_history && profile.work_history.length > 0) {
-    workExperienceHTML = profile.work_history.map(job => `
-      <div class="job">
-        <div class="job-header">
-          <div class="job-title-company">
-            <span class="job-title">${escapeHtml(job.title)}</span>
-            <span class="company"> | ${escapeHtml(job.company)}</span>
-          </div>
-          <div class="job-dates">${escapeHtml(job.startDate)} – ${escapeHtml(job.endDate)}</div>
-        </div>
-        <ul class="job-bullets">
-          ${formatBulletPoints(job.description)}
-        </ul>
-      </div>
-    `).join('\n');
-  }
-  
-  // Education HTML
-  let educationHTML = '';
-  if (profile.education && profile.education.length > 0) {
-    educationHTML = profile.education.map(edu => `
-      <div class="education-item">
-        <div class="edu-header">
-          <div class="edu-degree">
-            <span class="degree">${escapeHtml(edu.degree)}</span>
-            ${edu.field ? `<span class="field">, ${escapeHtml(edu.field)}</span>` : ''}
-          </div>
-          <div class="edu-dates">${escapeHtml(edu.startDate)} – ${escapeHtml(edu.endDate)}</div>
-        </div>
-        <div class="edu-institution">${escapeHtml(edu.institution)}</div>
-      </div>
-    `).join('\n');
-  }
-  
-  // Skills HTML
-  let skillsHTML = '';
-  if (profile.skills && profile.skills.length > 0) {
-    skillsHTML = profile.skills.map(skill => `<span class="skill">${escapeHtml(skill)}</span>`).join(' ');
-  }
-  
-  // Professional Summary
-  const summaryHTML = tailoredSummary 
-    ? `<section class="section">
-        <h2>Professional Summary</h2>
-        <p class="summary">${escapeHtml(tailoredSummary)}</p>
-      </section>`
-    : '';
-  
-  return `<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Resume - ${escapeHtml(name)}</title>
-  <style>
+const baseStyles = `
     @import url('https://fonts.googleapis.com/css2?family=Libre+Baskerville:wght@400;700&family=Open+Sans:wght@400;600&display=swap');
     
     * {
@@ -154,7 +88,6 @@ function generateResumeHTML(profile: ProfileData, tailoredSummary?: string): str
       }
     }
     
-    /* Header */
     .header {
       text-align: center;
       margin-bottom: 20px;
@@ -176,7 +109,6 @@ function generateResumeHTML(profile: ProfileData, tailoredSummary?: string): str
       color: #555;
     }
     
-    /* Sections */
     .section {
       margin-bottom: 18px;
     }
@@ -193,14 +125,12 @@ function generateResumeHTML(profile: ProfileData, tailoredSummary?: string): str
       margin-bottom: 10px;
     }
     
-    /* Summary */
     .summary {
       font-size: 10pt;
       line-height: 1.5;
       color: #333;
     }
     
-    /* Work Experience */
     .job {
       margin-bottom: 14px;
     }
@@ -242,7 +172,6 @@ function generateResumeHTML(profile: ProfileData, tailoredSummary?: string): str
       padding-left: 4px;
     }
     
-    /* Education */
     .education-item {
       margin-bottom: 10px;
     }
@@ -276,7 +205,6 @@ function generateResumeHTML(profile: ProfileData, tailoredSummary?: string): str
       font-size: 9pt;
     }
     
-    /* Skills */
     .skills-container {
       display: flex;
       flex-wrap: wrap;
@@ -291,7 +219,73 @@ function generateResumeHTML(profile: ProfileData, tailoredSummary?: string): str
       font-size: 9pt;
       border: 1px solid #d0d8e0;
     }
-  </style>
+`;
+
+function generateResumeHTML(profile: ProfileData, tailoredSummary?: string, tailoredSkills?: string[]): string {
+  const name = profile.full_name || 'Your Name';
+  const email = profile.email || '';
+  const phone = profile.phone_number || '';
+  const location = profile.location_zip || '';
+  
+  const contactParts = [email, phone, location].filter(Boolean);
+  const contactLine = contactParts.join(' | ');
+  
+  // Use tailored skills if provided, otherwise use profile skills
+  const displaySkills = tailoredSkills && tailoredSkills.length > 0 ? tailoredSkills : profile.skills;
+  
+  let workExperienceHTML = '';
+  if (profile.work_history && profile.work_history.length > 0) {
+    workExperienceHTML = profile.work_history.map(job => `
+      <div class="job">
+        <div class="job-header">
+          <div class="job-title-company">
+            <span class="job-title">${escapeHtml(job.title)}</span>
+            <span class="company"> | ${escapeHtml(job.company)}</span>
+          </div>
+          <div class="job-dates">${escapeHtml(job.startDate)} – ${escapeHtml(job.endDate)}</div>
+        </div>
+        <ul class="job-bullets">
+          ${formatBulletPoints(job.description)}
+        </ul>
+      </div>
+    `).join('\n');
+  }
+  
+  let educationHTML = '';
+  if (profile.education && profile.education.length > 0) {
+    educationHTML = profile.education.map(edu => `
+      <div class="education-item">
+        <div class="edu-header">
+          <div class="edu-degree">
+            <span class="degree">${escapeHtml(edu.degree)}</span>
+            ${edu.field ? `<span class="field">, ${escapeHtml(edu.field)}</span>` : ''}
+          </div>
+          <div class="edu-dates">${escapeHtml(edu.startDate)} – ${escapeHtml(edu.endDate)}</div>
+        </div>
+        <div class="edu-institution">${escapeHtml(edu.institution)}</div>
+      </div>
+    `).join('\n');
+  }
+  
+  let skillsHTML = '';
+  if (displaySkills && displaySkills.length > 0) {
+    skillsHTML = displaySkills.map(skill => `<span class="skill">${escapeHtml(skill)}</span>`).join(' ');
+  }
+  
+  const summaryHTML = tailoredSummary 
+    ? `<section class="section">
+        <h2>Professional Summary</h2>
+        <p class="summary">${escapeHtml(tailoredSummary)}</p>
+      </section>`
+    : '';
+  
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Resume - ${escapeHtml(name)}</title>
+  <style>${baseStyles}</style>
 </head>
 <body>
   <header class="header">
@@ -315,7 +309,7 @@ function generateResumeHTML(profile: ProfileData, tailoredSummary?: string): str
   </section>
   ` : ''}
   
-  ${profile.skills && profile.skills.length > 0 ? `
+  ${displaySkills && displaySkills.length > 0 ? `
   <section class="section">
     <h2>Skills</h2>
     <div class="skills-container">
@@ -323,6 +317,117 @@ function generateResumeHTML(profile: ProfileData, tailoredSummary?: string): str
     </div>
   </section>
   ` : ''}
+</body>
+</html>`;
+}
+
+function generateCoverLetterHTML(
+  profile: ProfileData, 
+  coverLetterContent: string,
+  jobTitle: string,
+  companyName: string
+): string {
+  const name = profile.full_name || 'Your Name';
+  const email = profile.email || '';
+  const phone = profile.phone_number || '';
+  const location = profile.location_zip || '';
+  
+  const contactParts = [email, phone, location].filter(Boolean);
+  const contactLine = contactParts.join(' | ');
+  
+  const today = new Date().toLocaleDateString('en-US', { 
+    year: 'numeric', 
+    month: 'long', 
+    day: 'numeric' 
+  });
+  
+  // Convert markdown-style content to HTML paragraphs
+  const paragraphs = coverLetterContent
+    .split(/\n\n+/)
+    .map(p => p.trim())
+    .filter(p => p.length > 0 && !p.startsWith('#'))
+    .map(p => `<p>${escapeHtml(p).replace(/\n/g, '<br>')}</p>`)
+    .join('\n');
+  
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Cover Letter - ${escapeHtml(name)} - ${escapeHtml(companyName)}</title>
+  <style>
+    ${baseStyles}
+    
+    .letter-date {
+      margin-bottom: 20px;
+      color: #555;
+    }
+    
+    .letter-recipient {
+      margin-bottom: 20px;
+    }
+    
+    .letter-recipient p {
+      margin: 0;
+      line-height: 1.6;
+    }
+    
+    .letter-body {
+      margin-bottom: 30px;
+    }
+    
+    .letter-body p {
+      margin-bottom: 16px;
+      line-height: 1.6;
+      text-align: justify;
+    }
+    
+    .letter-body p:last-child {
+      margin-bottom: 0;
+    }
+    
+    .letter-closing {
+      margin-top: 30px;
+    }
+    
+    .letter-closing .sign-off {
+      margin-bottom: 30px;
+    }
+    
+    .letter-closing .signature {
+      font-weight: 600;
+      color: #2c3e50;
+    }
+    
+    .letter-closing .contact-info {
+      font-size: 9pt;
+      color: #666;
+      margin-top: 4px;
+    }
+  </style>
+</head>
+<body>
+  <header class="header">
+    <h1 class="name">${escapeHtml(name)}</h1>
+    <div class="contact">${escapeHtml(contactLine)}</div>
+  </header>
+  
+  <div class="letter-date">${today}</div>
+  
+  <div class="letter-recipient">
+    <p>Hiring Manager</p>
+    <p>${escapeHtml(companyName)}</p>
+  </div>
+  
+  <div class="letter-body">
+    ${paragraphs}
+  </div>
+  
+  <div class="letter-closing">
+    <p class="sign-off">Sincerely,</p>
+    <p class="signature">${escapeHtml(name)}</p>
+    <p class="contact-info">${escapeHtml(email)}${phone ? ` | ${escapeHtml(phone)}` : ''}</p>
+  </div>
 </body>
 </html>`;
 }
@@ -355,7 +460,15 @@ serve(async (req) => {
       });
     }
 
-    const { tailoredSummary } = await req.json().catch(() => ({}));
+    const body = await req.json().catch(() => ({}));
+    const { 
+      tailoredSummary, 
+      tailoredSkills,
+      coverLetterContent, 
+      jobTitle, 
+      companyName,
+      type = "resume" // "resume" | "cover-letter" | "both"
+    } = body;
 
     // Get user's profile with resume data
     const { data: profile, error: profileError } = await supabase
@@ -372,32 +485,64 @@ serve(async (req) => {
       });
     }
 
-    // Check if there's any content
     const hasContent = (
       (profile.work_history && profile.work_history.length > 0) ||
       (profile.education && profile.education.length > 0) ||
       (profile.skills && profile.skills.length > 0)
     );
 
-    if (!hasContent) {
+    if (!hasContent && type !== "cover-letter") {
       return new Response(JSON.stringify({ error: "Please add work history, education, or skills to your profile first" }), {
         status: 400,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
 
-    console.log("Generating resume HTML for user:", user.id);
+    console.log("Generating", type, "HTML for user:", user.id);
     console.log("Work history entries:", profile.work_history?.length || 0);
     console.log("Education entries:", profile.education?.length || 0);
     console.log("Skills:", profile.skills?.length || 0);
 
-    const html = generateResumeHTML(profile as ProfileData, tailoredSummary);
+    const safeName = (profile.full_name || 'Resume').replace(/\s+/g, '_');
+    const safeCompany = (companyName || 'Company').replace(/[^a-zA-Z0-9]/g, '_');
 
-    return new Response(JSON.stringify({ 
-      success: true,
-      html,
-      fileName: `${(profile.full_name || 'resume').replace(/\s+/g, '_')}_Resume.html`
-    }), {
+    const result: {
+      success: boolean;
+      resumeHtml?: string;
+      resumeFileName?: string;
+      coverLetterHtml?: string;
+      coverLetterFileName?: string;
+    } = { success: true };
+
+    if (type === "resume" || type === "both") {
+      result.resumeHtml = generateResumeHTML(profile as ProfileData, tailoredSummary, tailoredSkills);
+      result.resumeFileName = `${safeName}_Resume_${safeCompany}.html`;
+    }
+
+    if (type === "cover-letter" || type === "both") {
+      if (coverLetterContent) {
+        result.coverLetterHtml = generateCoverLetterHTML(
+          profile as ProfileData, 
+          coverLetterContent,
+          jobTitle || "Position",
+          companyName || "Company"
+        );
+        result.coverLetterFileName = `${safeName}_CoverLetter_${safeCompany}.html`;
+      }
+    }
+
+    // Legacy support: if just asking for basic resume
+    if (type === "resume" && !body.tailoredSummary && !body.companyName) {
+      return new Response(JSON.stringify({ 
+        success: true,
+        html: result.resumeHtml,
+        fileName: `${safeName}_Resume.html`
+      }), {
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
+    return new Response(JSON.stringify(result), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
 

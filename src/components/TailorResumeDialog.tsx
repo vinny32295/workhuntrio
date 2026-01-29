@@ -8,7 +8,7 @@ import {
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Loader2, Copy, Check, FileText, Sparkles, Download } from "lucide-react";
+import { Loader2, Copy, Check, FileText, Sparkles, Download, FileCheck } from "lucide-react";
 import { toast } from "sonner";
 import ReactMarkdown from "react-markdown";
 
@@ -29,7 +29,8 @@ export default function TailorResumeDialog({
   job,
 }: TailorResumeDialogProps) {
   const [loading, setLoading] = useState(false);
-  const [downloadingPdf, setDownloadingPdf] = useState(false);
+  const [downloadingResume, setDownloadingResume] = useState(false);
+  const [downloadingCoverLetter, setDownloadingCoverLetter] = useState(false);
   const [content, setContent] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
 
@@ -79,20 +80,57 @@ export default function TailorResumeDialog({
     }
   };
 
-  const downloadAsPdf = async () => {
+  // Parse the generated content to extract summary, skills, and cover letter
+  const parseContent = () => {
+    if (!content) return { summary: undefined, skills: undefined, coverLetter: undefined };
+    
+    // Extract professional summary
+    const summaryMatch = content.match(/##\s*(?:PROFESSIONAL\s*)?SUMMARY\s*\n+([\s\S]*?)(?=\n##|\n---|\n#|$)/i);
+    const summary = summaryMatch 
+      ? summaryMatch[1].trim().replace(/\*\*/g, '').replace(/\n/g, ' ').slice(0, 500)
+      : undefined;
+    
+    // Extract skills section
+    const skillsMatch = content.match(/##\s*SKILLS?\s*\n+([\s\S]*?)(?=\n##|\n---|\n#|$)/i);
+    let skills: string[] | undefined;
+    if (skillsMatch) {
+      const skillsText = skillsMatch[1];
+      // Parse bullet points or comma-separated skills
+      skills = skillsText
+        .split(/[\n•\-,]/)
+        .map(s => s.replace(/\*\*/g, '').trim())
+        .filter(s => s.length > 0 && s.length < 50);
+    }
+    
+    // Extract cover letter section
+    const coverLetterMatch = content.match(/# COVER LETTER\s*\n+([\s\S]*?)(?=\n---\s*$|$)/i);
+    const coverLetter = coverLetterMatch 
+      ? coverLetterMatch[1].trim()
+        .replace(/\*\*/g, '')
+        .replace(/Dear Hiring Manager,?\s*/i, '')
+        .replace(/Sincerely,?\s*\n.*/is, '')
+        .trim()
+      : undefined;
+    
+    return { summary, skills, coverLetter };
+  };
+
+  const downloadResume = async () => {
     if (!content) return;
     
-    setDownloadingPdf(true);
+    setDownloadingResume(true);
 
     try {
-      // Extract professional summary from the tailored content
-      const summaryMatch = content.match(/##\s*(?:PROFESSIONAL\s*)?SUMMARY\s*\n+([\s\S]*?)(?=\n##|\n---|\n#|$)/i);
-      const tailoredSummary = summaryMatch 
-        ? summaryMatch[1].trim().replace(/\*\*/g, '').replace(/\n/g, ' ').slice(0, 500)
-        : undefined;
+      const { summary, skills } = parseContent();
 
       const { data, error } = await supabase.functions.invoke("generate-resume-pdf", {
-        body: { tailoredSummary },
+        body: { 
+          tailoredSummary: summary,
+          tailoredSkills: skills,
+          companyName: job?.company_slug || 'Company',
+          jobTitle: job?.title || 'Position',
+          type: "resume"
+        },
       });
 
       if (error) throw error;
@@ -102,20 +140,15 @@ export default function TailorResumeDialog({
         return;
       }
 
-      // Create a Blob from the HTML content
-      const blob = new Blob([data.html], { type: "text/html" });
+      // Download the resume HTML
+      const blob = new Blob([data.resumeHtml], { type: "text/html" });
       const url = URL.createObjectURL(blob);
-
-      // Create download link with job-specific filename
       const link = document.createElement("a");
       link.href = url;
-      const companyName = job?.company_slug?.replace(/[^a-zA-Z0-9]/g, '_') || 'Company';
-      link.download = data.fileName?.replace('.html', `_${companyName}.html`) || `resume_${companyName}.html`;
+      link.download = data.resumeFileName || "resume.html";
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
-
-      // Clean up
       URL.revokeObjectURL(url);
 
       toast.success("Resume downloaded! Open in browser and print to PDF.", {
@@ -124,9 +157,62 @@ export default function TailorResumeDialog({
       });
     } catch (error) {
       console.error("Download error:", error);
-      toast.error("Failed to generate resume PDF");
+      toast.error("Failed to generate resume");
     } finally {
-      setDownloadingPdf(false);
+      setDownloadingResume(false);
+    }
+  };
+
+  const downloadCoverLetter = async () => {
+    if (!content) return;
+    
+    setDownloadingCoverLetter(true);
+
+    try {
+      const { coverLetter } = parseContent();
+      
+      if (!coverLetter) {
+        toast.error("No cover letter content found");
+        setDownloadingCoverLetter(false);
+        return;
+      }
+
+      const { data, error } = await supabase.functions.invoke("generate-resume-pdf", {
+        body: { 
+          coverLetterContent: coverLetter,
+          companyName: job?.company_slug || 'Company',
+          jobTitle: job?.title || 'Position',
+          type: "cover-letter"
+        },
+      });
+
+      if (error) throw error;
+
+      if (data.error) {
+        toast.error(data.error);
+        return;
+      }
+
+      // Download the cover letter HTML
+      const blob = new Blob([data.coverLetterHtml], { type: "text/html" });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = data.coverLetterFileName || "cover_letter.html";
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+
+      toast.success("Cover letter downloaded! Open in browser and print to PDF.", {
+        description: "Use Ctrl+P / Cmd+P to save as PDF",
+        duration: 5000,
+      });
+    } catch (error) {
+      console.error("Download error:", error);
+      toast.error("Failed to generate cover letter");
+    } finally {
+      setDownloadingCoverLetter(false);
     }
   };
 
@@ -194,29 +280,49 @@ export default function TailorResumeDialog({
         </div>
 
         {content && (
-          <div className="flex justify-end gap-2 pt-4 border-t">
-            <Button variant="outline" onClick={() => setContent(null)}>
+          <div className="flex flex-wrap justify-end gap-2 pt-4 border-t">
+            <Button variant="outline" onClick={() => setContent(null)} size="sm">
               Regenerate
             </Button>
             <Button 
               variant="outline" 
-              onClick={downloadAsPdf} 
-              disabled={downloadingPdf}
+              onClick={downloadResume} 
+              disabled={downloadingResume}
+              size="sm"
               className="gap-2"
             >
-              {downloadingPdf ? (
+              {downloadingResume ? (
                 <>
                   <Loader2 className="h-4 w-4 animate-spin" />
                   Generating...
                 </>
               ) : (
                 <>
-                  <Download className="h-4 w-4" />
-                  Download PDF
+                  <FileText className="h-4 w-4" />
+                  Download Resume
                 </>
               )}
             </Button>
-            <Button onClick={copyToClipboard} className="gap-2">
+            <Button 
+              variant="outline" 
+              onClick={downloadCoverLetter} 
+              disabled={downloadingCoverLetter}
+              size="sm"
+              className="gap-2"
+            >
+              {downloadingCoverLetter ? (
+                <>
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  Generating...
+                </>
+              ) : (
+                <>
+                  <FileCheck className="h-4 w-4" />
+                  Download Cover Letter
+                </>
+              )}
+            </Button>
+            <Button onClick={copyToClipboard} size="sm" className="gap-2">
               {copied ? (
                 <>
                   <Check className="h-4 w-4" />
