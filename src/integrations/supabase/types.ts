@@ -14,6 +14,51 @@ export type Database = {
   }
   public: {
     Tables: {
+      discovered_jobs: {
+        Row: {
+          ats_type: string | null
+          company_slug: string | null
+          created_at: string
+          discovered_at: string
+          id: string
+          is_reviewed: boolean | null
+          match_score: number | null
+          snippet: string | null
+          source: string | null
+          title: string
+          url: string
+          user_id: string
+        }
+        Insert: {
+          ats_type?: string | null
+          company_slug?: string | null
+          created_at?: string
+          discovered_at?: string
+          id?: string
+          is_reviewed?: boolean | null
+          match_score?: number | null
+          snippet?: string | null
+          source?: string | null
+          title: string
+          url: string
+          user_id: string
+        }
+        Update: {
+          ats_type?: string | null
+          company_slug?: string | null
+          created_at?: string
+          discovered_at?: string
+          id?: string
+          is_reviewed?: boolean | null
+          match_score?: number | null
+          snippet?: string | null
+          source?: string | null
+          title?: string
+          url?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
       job_applications: {
         Row: {
           applied_at: string

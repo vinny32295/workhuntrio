@@ -2,11 +2,12 @@ import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "@/lib/supabase";
 import { Button } from "@/components/ui/button";
-import { Crosshair, LogOut, Upload, Settings, BarChart3, Check, ChevronDown } from "lucide-react";
+import { Crosshair, LogOut, Upload, Settings, BarChart3, Check, ChevronDown, Search } from "lucide-react";
 import type { User } from "@supabase/supabase-js";
 import ResumeUpload from "@/components/ResumeUpload";
 import JobPreferencesForm from "@/components/JobPreferencesForm";
 import JobApplicationsTable from "@/components/JobApplicationsTable";
+import DiscoveredJobsTable from "@/components/DiscoveredJobsTable";
 import {
   Collapsible,
   CollapsibleContent,
@@ -164,6 +165,17 @@ const Dashboard = () => {
             )}
           </CollapsibleContent>
         </Collapsible>
+
+        {/* Discovered Jobs Section */}
+        <div className="glass-card border border-white/10 rounded-2xl p-6 mb-8">
+          <h2 className="text-xl font-semibold mb-6 flex items-center gap-2">
+            <Search className="h-5 w-5 text-primary" />
+            Discovered Jobs
+          </h2>
+          {user && (
+            <DiscoveredJobsTable userId={user.id} />
+          )}
+        </div>
 
         {/* Job Applications Section */}
         <div className="glass-card border border-white/10 rounded-2xl p-6 mb-8">
