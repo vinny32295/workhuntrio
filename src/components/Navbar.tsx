@@ -7,8 +7,9 @@ const Navbar = () => {
       <div className="container mx-auto px-6 py-4">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <div className="relative">
+            <div className="relative flex items-center justify-center">
               <Crosshair className="h-8 w-8 text-primary" />
+              <span className="absolute text-white font-bold text-sm">$</span>
               <div className="absolute inset-0 bg-primary/20 blur-xl rounded-full" />
             </div>
             <span className="text-xl font-bold tracking-tight">
