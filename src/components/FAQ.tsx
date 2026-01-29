@@ -7,34 +7,39 @@ import {
 
 const faqs = [
   {
-    question: "How does WorkHuntr find jobs for me?",
+    question: "How does WorkHuntr work?",
     answer:
-      "WorkHuntr uses AI-powered search to scan thousands of job boards, company career pages, and ATS platforms in real-time. We match listings to your skills, experience, and preferences — then deliver only the most relevant opportunities directly to you.",
+      "Simply upload your resume, select your preferences (role type, remote/hybrid/in-person, location and search radius), and we handle the rest. Our AI scans thousands of jobs, scores each match against your skills, and automatically applies to the best fits — complete with a custom-tailored resume and cover letter for each application.",
   },
   {
-    question: "Do I need to apply manually?",
+    question: "Do I need to apply to jobs myself?",
     answer:
-      "Yes, you still apply to jobs yourself. WorkHuntr handles the discovery, analysis, and resume tailoring — but we believe the final application should come from you. This keeps you in control and ensures authenticity.",
+      "Nope! That's the whole point. WorkHuntr applies on your behalf. When we find a strong match, we generate a customized resume and cover letter tailored to the job description and submit your application directly. You just sit back and wait for interviews.",
   },
   {
-    question: "How is my resume tailored for each job?",
+    question: "How does the job matching work?",
     answer:
-      "Our AI analyzes each job description to identify key requirements and keywords. It then rewrites your resume bullets to highlight the most relevant experience, increasing your chances of passing ATS filters and catching a recruiter's eye.",
+      "Our AI analyzes your resume to extract your skills, experience, and qualifications. Each job is scored based on how well it matches your profile. Only high-scoring matches trigger automatic applications — so you're not wasting time on roles that aren't a fit.",
+  },
+  {
+    question: "How are my resume and cover letter customized?",
+    answer:
+      "For each application, our AI rewrites your resume bullets to highlight the most relevant experience and keywords from the job description. We also generate a unique cover letter that speaks directly to the company's needs — increasing your chances of getting noticed.",
+  },
+  {
+    question: "What job preferences can I set?",
+    answer:
+      "You can filter by role type (e.g., Product Manager, Software Engineer), work arrangement (remote, hybrid, or in-person), and location (zip code with a custom search radius). We only apply to jobs that match all your criteria.",
   },
   {
     question: "Is my data secure?",
     answer:
-      "Absolutely. Your resume and personal information are encrypted and never shared with third parties. We only use your data to find and match jobs for you — nothing else.",
+      "Absolutely. Your resume and personal information are encrypted and never shared with third parties. We only use your data to find jobs and submit applications on your behalf — nothing else.",
   },
   {
     question: "Can I cancel anytime?",
     answer:
-      "Yes! There are no long-term contracts. You can upgrade, downgrade, or cancel your subscription at any time from your account settings. If you cancel, you'll retain access until the end of your billing period.",
-  },
-  {
-    question: "What types of jobs does WorkHuntr support?",
-    answer:
-      "We specialize in remote and hybrid roles across tech, operations, product, marketing, and more. You can customize your job preferences to target specific industries, roles, and locations.",
+      "Yes! No long-term contracts. Upgrade, downgrade, or cancel from your account settings at any time. If you cancel, you keep access until the end of your billing period.",
   },
 ];
 
