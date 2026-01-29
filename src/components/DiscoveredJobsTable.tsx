@@ -44,6 +44,7 @@ export default function DiscoveredJobsTable({ userId }: DiscoveredJobsTableProps
         .from("discovered_jobs")
         .select("*")
         .eq("user_id", userId)
+        .order("match_score", { ascending: false, nullsFirst: false })
         .order("discovered_at", { ascending: false })
         .limit(50);
 
@@ -123,6 +124,20 @@ export default function DiscoveredJobsTable({ userId }: DiscoveredJobsTableProps
     }
   };
 
+  const getScoreColor = (score: number) => {
+    if (score >= 80) return "bg-emerald-500";
+    if (score >= 60) return "bg-primary";
+    if (score >= 40) return "bg-amber-500";
+    return "bg-muted-foreground";
+  };
+
+  const getScoreTextColor = (score: number) => {
+    if (score >= 80) return "text-emerald-400";
+    if (score >= 60) return "text-primary";
+    if (score >= 40) return "text-amber-400";
+    return "text-muted-foreground";
+  };
+
   const unreviewedCount = jobs.filter(j => !j.is_reviewed).length;
 
   if (loading) {
@@ -166,6 +181,7 @@ export default function DiscoveredJobsTable({ userId }: DiscoveredJobsTableProps
           <TableHeader>
             <TableRow className="border-white/10 hover:bg-white/5">
               <TableHead>Job</TableHead>
+              <TableHead>Match</TableHead>
               <TableHead>Source</TableHead>
               <TableHead>Discovered</TableHead>
               <TableHead className="text-right">Actions</TableHead>
@@ -193,6 +209,23 @@ export default function DiscoveredJobsTable({ userId }: DiscoveredJobsTableProps
                       </div>
                     )}
                   </div>
+                </TableCell>
+                <TableCell>
+                  {job.match_score !== null ? (
+                    <div className="flex items-center gap-2">
+                      <div className="w-12 h-2 bg-muted rounded-full overflow-hidden">
+                        <div 
+                          className={`h-full rounded-full ${getScoreColor(job.match_score)}`}
+                          style={{ width: `${job.match_score}%` }}
+                        />
+                      </div>
+                      <span className={`text-xs font-medium ${getScoreTextColor(job.match_score)}`}>
+                        {job.match_score}%
+                      </span>
+                    </div>
+                  ) : (
+                    <span className="text-xs text-muted-foreground">—</span>
+                  )}
                 </TableCell>
                 <TableCell>
                   <Badge className={getATSBadgeColor(job.ats_type)}>
