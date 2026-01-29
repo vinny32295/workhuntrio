@@ -9,7 +9,7 @@ const Navbar = () => {
           <div className="flex items-center gap-2">
             <div className="relative flex items-center justify-center">
               <Crosshair className="h-8 w-8 text-primary" />
-              <span className="absolute text-white font-bold text-sm">$</span>
+              <span className="absolute text-white font-bold text-lg">$</span>
               <div className="absolute inset-0 bg-primary/20 blur-xl rounded-full" />
             </div>
             <span className="text-xl font-bold tracking-tight">
