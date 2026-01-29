@@ -1,3 +1,4 @@
+import { Link } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { ArrowRight, Zap, Target, Bot } from "lucide-react";
 
@@ -42,12 +43,14 @@ const Hero = () => {
           
           {/* CTA Buttons */}
           <div className="flex flex-col sm:flex-row items-center justify-center gap-4 mb-16 animate-fade-in" style={{ animationDelay: '0.3s' }}>
-            <Button variant="hero" size="xl" className="group">
-              Start Hunting Free
-              <ArrowRight className="h-5 w-5 transition-transform group-hover:translate-x-1" />
+            <Button variant="hero" size="xl" className="group" asChild>
+              <Link to="/auth">
+                Start Hunting Free
+                <ArrowRight className="h-5 w-5 transition-transform group-hover:translate-x-1" />
+              </Link>
             </Button>
-            <Button variant="hero-outline" size="xl">
-              See How It Works
+            <Button variant="hero-outline" size="xl" asChild>
+              <a href="#how-it-works">See How It Works</a>
             </Button>
           </div>
           
