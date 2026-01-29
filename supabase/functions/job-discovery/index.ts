@@ -16,6 +16,15 @@ const ATS_PATTERNS: Record<string, RegExp[]> = {
   wellfound: [/wellfound\.com\/company\/(\w+)/],
 };
 
+// Patterns for individual job posting URLs (not just board pages)
+const JOB_POSTING_PATTERNS: RegExp[] = [
+  /boards\.greenhouse\.io\/\w+\/jobs\/\d+/,
+  /jobs\.lever\.co\/\w+\/[\w-]+/,
+  /apply\.workable\.com\/\w+\/j\/[\w-]+/,
+  /jobs\.ashbyhq\.com\/\w+\/[\w-]+/,
+  /\w+\.bamboohr\.com\/careers\/\d+/,
+];
+
 const SKIP_DOMAINS = [
   "linkedin.com", "facebook.com", "twitter.com", "instagram.com",
   "youtube.com", "reddit.com", "glassdoor.com", "indeed.com",
@@ -36,6 +45,14 @@ interface ClassifiedJob {
   salaryMin: number | null;
   salaryMax: number | null;
   salaryCurrency: string | null;
+  fullDescription: string | null;
+  requirements: string[] | null;
+  isDirectPosting: boolean;
+}
+
+// Check if URL is a direct job posting (not just a board page)
+function isDirectJobPosting(url: string): boolean {
+  return JOB_POSTING_PATTERNS.some(pattern => pattern.test(url));
 }
 
 // Classify URL by ATS type
@@ -88,6 +105,9 @@ function filterResults(results: SearchResult[]): ClassifiedJob[] {
         salaryMin: null,
         salaryMax: null,
         salaryCurrency: null,
+        fullDescription: null,
+        requirements: null,
+        isDirectPosting: isDirectJobPosting(result.url),
       });
     }
   }
@@ -167,60 +187,83 @@ function buildSearchQueries(preferences: {
   
   for (const role of roles.slice(0, 3)) {
     if (workType === "remote") {
-      // Remote searches - no location needed
-      queries.push(`site:boards.greenhouse.io remote ${role}`);
-      queries.push(`site:jobs.lever.co remote ${role}`);
+      // Remote searches - target specific job postings, not just boards
+      queries.push(`site:boards.greenhouse.io/*/jobs remote "${role}"`);
+      queries.push(`site:jobs.lever.co remote "${role}" apply`);
       queries.push(`remote "${role}" jobs hiring 2026`);
     } else {
       // In-person/hybrid - include location
-      queries.push(`site:boards.greenhouse.io ${locationTerm} ${role}`);
-      queries.push(`site:jobs.lever.co ${locationTerm} ${role}`);
+      queries.push(`site:boards.greenhouse.io/*/jobs ${locationTerm} "${role}"`);
+      queries.push(`site:jobs.lever.co ${locationTerm} "${role}" apply`);
       queries.push(`"${role}" jobs ${locationTerm} hiring 2026`);
-      // Also search with work type keyword
       queries.push(`${workType} "${role}" jobs ${locationTerm}`);
     }
   }
   
   // Add some broad ATS searches with location if applicable
   if (locationTerm) {
-    queries.push(`site:apply.workable.com ${locationTerm} manager`);
+    queries.push(`site:apply.workable.com/*/j ${locationTerm}`);
     queries.push(`site:jobs.ashbyhq.com ${locationTerm}`);
   } else {
-    queries.push(`site:apply.workable.com ${workType} manager`);
+    queries.push(`site:apply.workable.com/*/j ${workType}`);
     queries.push(`site:jobs.ashbyhq.com ${workType}`);
   }
   
   return queries;
 }
 
-// Extract salary info using AI
-async function extractSalaryInfo(
-  jobs: ClassifiedJob[],
+// Fetch page content with timeout
+async function fetchPageContent(url: string, timeoutMs: number = 5000): Promise<string | null> {
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+    
+    const response = await fetch(url, {
+      signal: controller.signal,
+      headers: {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+      },
+    });
+    
+    clearTimeout(timeoutId);
+    
+    if (!response.ok) {
+      console.log(`Failed to fetch ${url}: ${response.status}`);
+      return null;
+    }
+    
+    const html = await response.text();
+    return html;
+  } catch (error) {
+    console.log(`Error fetching ${url}:`, error);
+    return null;
+  }
+}
+
+// Extract job links from a job board page using AI
+async function extractJobLinksFromPage(
+  html: string,
+  pageUrl: string,
   apiKey: string
-): Promise<Map<string, { min: number | null; max: number | null; currency: string }>> {
-  const salaryMap = new Map<string, { min: number | null; max: number | null; currency: string }>();
+): Promise<string[]> {
+  // Truncate HTML to avoid token limits - focus on the main content
+  const truncatedHtml = html.substring(0, 50000);
   
-  if (jobs.length === 0) return salaryMap;
+  const prompt = `Analyze this HTML from a job board page and extract all individual job posting URLs.
   
-  const jobDescriptions = jobs.map((job, idx) => 
-    `Job ${idx + 1} (URL: ${job.url}):
-Title: ${job.title}
-Snippet: ${job.snippet || "No description"}`
-  ).join("\n\n");
+Page URL: ${pageUrl}
 
-  const prompt = `Extract salary information from these job listings. Look for salary ranges, hourly rates, or compensation mentions in titles and snippets.
+Look for:
+- Links to individual job postings (not category pages or filters)
+- URLs containing job IDs, position slugs, or specific role pages
+- Common patterns: /jobs/123, /j/abc123, /positions/xyz
 
-JOBS:
-${jobDescriptions}
+Return ONLY a JSON array of absolute URLs. If no job links found, return [].
+Do not include duplicate URLs. Maximum 20 URLs.
 
-For each job, extract:
-- salary_min: minimum salary in annual USD (convert hourly to annual assuming 2080 hours/year, convert other currencies to USD estimate)
-- salary_max: maximum salary in annual USD
-- currency: original currency mentioned (USD, EUR, GBP, etc.)
-
-If no salary is mentioned, set min and max to null.
-
-Return a JSON array with objects containing "url", "salary_min", "salary_max", "currency" for each job.`;
+HTML (truncated):
+${truncatedHtml}`;
 
   try {
     const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
@@ -230,9 +273,9 @@ Return a JSON array with objects containing "url", "salary_min", "salary_max", "
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        model: "google/gemini-3-flash-preview",
+        model: "google/gemini-2.5-flash-lite",
         messages: [
-          { role: "system", content: "You are a salary data extraction AI. Extract salary information from job listings. Always respond with valid JSON arrays. Be conservative - only extract salaries that are clearly stated." },
+          { role: "system", content: "You extract job posting URLs from HTML. Always respond with valid JSON arrays only." },
           { role: "user", content: prompt },
         ],
         temperature: 0.1,
@@ -240,37 +283,104 @@ Return a JSON array with objects containing "url", "salary_min", "salary_max", "
     });
 
     if (!response.ok) {
-      console.error("AI API error for salary extraction:", response.status);
-      return salaryMap;
+      console.error("AI API error for link extraction:", response.status);
+      return [];
     }
 
     const data = await response.json();
     const content = data.choices?.[0]?.message?.content || "";
 
-    // Parse JSON response
     const jsonMatch = content.match(/\[[\s\S]*?\]/);
-    if (!jsonMatch) {
-      console.log("No JSON found in salary extraction response");
-      return salaryMap;
-    }
+    if (!jsonMatch) return [];
 
-    const salaries = JSON.parse(jsonMatch[0]);
-    
-    for (const s of salaries) {
-      if (s.url && (s.salary_min !== null || s.salary_max !== null)) {
-        salaryMap.set(s.url, {
-          min: s.salary_min ? Math.round(s.salary_min) : null,
-          max: s.salary_max ? Math.round(s.salary_max) : null,
-          currency: s.currency || "USD",
-        });
-      }
-    }
-
-    console.log(`Extracted salary info for ${salaryMap.size} jobs`);
-    return salaryMap;
+    const urls = JSON.parse(jsonMatch[0]);
+    return Array.isArray(urls) ? urls.filter((u: any) => typeof u === "string" && u.startsWith("http")) : [];
   } catch (error) {
-    console.error("Salary extraction error:", error);
-    return salaryMap;
+    console.error("Link extraction error:", error);
+    return [];
+  }
+}
+
+// Extract job details from a job posting page using AI
+async function extractJobDetails(
+  html: string,
+  pageUrl: string,
+  apiKey: string
+): Promise<{
+  title: string | null;
+  company: string | null;
+  description: string | null;
+  requirements: string[] | null;
+  salaryMin: number | null;
+  salaryMax: number | null;
+  salaryCurrency: string | null;
+  location: string | null;
+}> {
+  const truncatedHtml = html.substring(0, 60000);
+  
+  const prompt = `Extract job details from this job posting page.
+
+Page URL: ${pageUrl}
+
+Extract:
+1. job_title: The exact job title
+2. company_name: The company name
+3. description: A summary of the role (2-3 sentences max)
+4. requirements: Array of key requirements/qualifications (max 5 items)
+5. salary_min: Minimum salary in annual USD (convert if needed)
+6. salary_max: Maximum salary in annual USD
+7. salary_currency: Original currency (USD, EUR, etc.)
+8. location: Job location or "Remote"
+
+Return as a JSON object. Use null for fields you can't find.
+
+HTML (truncated):
+${truncatedHtml}`;
+
+  try {
+    const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: "google/gemini-2.5-flash",
+        messages: [
+          { role: "system", content: "You extract structured job information from HTML. Always respond with valid JSON objects." },
+          { role: "user", content: prompt },
+        ],
+        temperature: 0.1,
+      }),
+    });
+
+    if (!response.ok) {
+      console.error("AI API error for job extraction:", response.status);
+      return { title: null, company: null, description: null, requirements: null, salaryMin: null, salaryMax: null, salaryCurrency: null, location: null };
+    }
+
+    const data = await response.json();
+    const content = data.choices?.[0]?.message?.content || "";
+
+    const jsonMatch = content.match(/\{[\s\S]*?\}/);
+    if (!jsonMatch) {
+      return { title: null, company: null, description: null, requirements: null, salaryMin: null, salaryMax: null, salaryCurrency: null, location: null };
+    }
+
+    const details = JSON.parse(jsonMatch[0]);
+    return {
+      title: details.job_title || null,
+      company: details.company_name || null,
+      description: details.description || null,
+      requirements: Array.isArray(details.requirements) ? details.requirements : null,
+      salaryMin: details.salary_min ? Math.round(details.salary_min) : null,
+      salaryMax: details.salary_max ? Math.round(details.salary_max) : null,
+      salaryCurrency: details.salary_currency || null,
+      location: details.location || null,
+    };
+  } catch (error) {
+    console.error("Job extraction error:", error);
+    return { title: null, company: null, description: null, requirements: null, salaryMin: null, salaryMax: null, salaryCurrency: null, location: null };
   }
 }
 
@@ -283,10 +393,18 @@ Deno.serve(async (req) => {
   try {
     // Get SerpAPI key from environment
     const serpApiKey = Deno.env.get("SERPAPI_KEY");
+    const lovableApiKey = Deno.env.get("LOVABLE_API_KEY");
     
     if (!serpApiKey) {
       return new Response(
         JSON.stringify({ error: "SerpAPI key not configured" }),
+        { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+    
+    if (!lovableApiKey) {
+      return new Response(
+        JSON.stringify({ error: "AI API key not configured" }),
         { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
@@ -330,7 +448,6 @@ Deno.serve(async (req) => {
     const queries = buildSearchQueries(profile || { target_roles: null, work_type: null, location_zip: null });
     
     console.log(`User preferences: work_type=${profile?.work_type}, location_zip=${profile?.location_zip}`);
-    
     console.log(`Running ${queries.length} search queries for user ${userId}`);
     
     // Run searches with rate limiting
@@ -362,36 +479,102 @@ Deno.serve(async (req) => {
     
     console.log(`Found ${classifiedJobs.length} relevant jobs from ${uniqueResults.length} unique results`);
     
-    // Extract salary info using AI (if we have the API key)
-    const lovableApiKey = Deno.env.get("LOVABLE_API_KEY");
-    let salaryMap = new Map<string, { min: number | null; max: number | null; currency: string }>();
+    // Separate direct postings from board pages
+    const directPostings = classifiedJobs.filter(j => j.isDirectPosting);
+    const boardPages = classifiedJobs.filter(j => !j.isDirectPosting);
     
-    if (lovableApiKey && classifiedJobs.length > 0) {
-      console.log("Extracting salary info using AI...");
-      salaryMap = await extractSalaryInfo(classifiedJobs, lovableApiKey);
+    console.log(`Direct postings: ${directPostings.length}, Board pages: ${boardPages.length}`);
+    
+    // For board pages, try to extract individual job links
+    const extractedJobUrls: string[] = [];
+    
+    for (const boardPage of boardPages.slice(0, 5)) { // Limit to 5 board pages to avoid timeouts
+      console.log(`Fetching board page: ${boardPage.url}`);
+      const html = await fetchPageContent(boardPage.url);
+      
+      if (html) {
+        const jobLinks = await extractJobLinksFromPage(html, boardPage.url, lovableApiKey);
+        console.log(`Extracted ${jobLinks.length} job links from ${boardPage.url}`);
+        extractedJobUrls.push(...jobLinks);
+      }
+      
+      // Rate limit
+      await new Promise(resolve => setTimeout(resolve, 300));
+    }
+    
+    // Add extracted URLs to direct postings
+    for (const jobUrl of extractedJobUrls) {
+      if (!seenUrls.has(jobUrl)) {
+        seenUrls.add(jobUrl);
+        const { type, companySlug } = classifyUrl(jobUrl);
+        directPostings.push({
+          url: jobUrl,
+          title: "",
+          snippet: "",
+          atsType: type,
+          companySlug,
+          salaryMin: null,
+          salaryMax: null,
+          salaryCurrency: null,
+          fullDescription: null,
+          requirements: null,
+          isDirectPosting: true,
+        });
+      }
+    }
+    
+    console.log(`Total direct postings after extraction: ${directPostings.length}`);
+    
+    // Fetch and extract details from direct job postings (limit to prevent timeouts)
+    const enrichedJobs: ClassifiedJob[] = [];
+    
+    for (const job of directPostings.slice(0, 15)) {
+      console.log(`Fetching job details: ${job.url}`);
+      const html = await fetchPageContent(job.url);
+      
+      if (html) {
+        const details = await extractJobDetails(html, job.url, lovableApiKey);
+        
+        enrichedJobs.push({
+          ...job,
+          title: details.title || job.title || "Untitled Position",
+          snippet: details.description || job.snippet,
+          fullDescription: details.description,
+          requirements: details.requirements,
+          salaryMin: details.salaryMin,
+          salaryMax: details.salaryMax,
+          salaryCurrency: details.salaryCurrency,
+          companySlug: details.company || job.companySlug,
+        });
+      } else {
+        // Keep original info if fetch fails
+        enrichedJobs.push(job);
+      }
+      
+      // Rate limit
+      await new Promise(resolve => setTimeout(resolve, 200));
     }
     
     // Insert into database
     let inserted = 0;
     let skipped = 0;
     let withSalary = 0;
+    let withDescription = 0;
     
-    for (const job of classifiedJobs) {
-      const salaryInfo = salaryMap.get(job.url);
-      
+    for (const job of enrichedJobs) {
       const { error } = await supabase.from("discovered_jobs").upsert(
         {
           user_id: userId,
           url: job.url,
-          title: job.title,
-          snippet: job.snippet,
+          title: job.title || "Untitled Position",
+          snippet: job.fullDescription || job.snippet,
           ats_type: job.atsType,
           company_slug: job.companySlug,
-          source: "serpapi",
+          source: "serpapi_enriched",
           discovered_at: new Date().toISOString(),
-          salary_min: salaryInfo?.min || null,
-          salary_max: salaryInfo?.max || null,
-          salary_currency: salaryInfo?.currency || null,
+          salary_min: job.salaryMin,
+          salary_max: job.salaryMax,
+          salary_currency: job.salaryCurrency || "USD",
         },
         { onConflict: "user_id,url" }
       );
@@ -401,7 +584,8 @@ Deno.serve(async (req) => {
         skipped++;
       } else {
         inserted++;
-        if (salaryInfo) withSalary++;
+        if (job.salaryMin || job.salaryMax) withSalary++;
+        if (job.fullDescription) withDescription++;
       }
     }
     
@@ -410,10 +594,13 @@ Deno.serve(async (req) => {
         success: true,
         queriesRun: queries.length,
         totalResults: uniqueResults.length,
-        relevantJobs: classifiedJobs.length,
+        boardPagesScraped: Math.min(boardPages.length, 5),
+        extractedJobLinks: extractedJobUrls.length,
+        enrichedJobs: enrichedJobs.length,
         inserted,
         skipped,
         withSalary,
+        withDescription,
       }),
       { headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
