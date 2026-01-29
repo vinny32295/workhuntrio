@@ -18,11 +18,11 @@ const tiers = [
   },
   {
     name: "Pro",
-    price: "$19",
+    price: "$19.99",
     period: "per month",
     description: "For active job seekers ready to land their dream role",
     features: [
-      "50 auto-applications per month",
+      "50 auto-applications per week",
       "Advanced AI job matching",
       "Custom resume for each job",
       "Custom cover letter for each job",
@@ -35,7 +35,7 @@ const tiers = [
   },
   {
     name: "Premium",
-    price: "$39",
+    price: "$49.99",
     period: "per month",
     description: "Maximum firepower for your job hunt",
     features: [
