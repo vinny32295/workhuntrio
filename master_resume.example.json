@@ -1,0 +1,48 @@
+{
+  "name": "Your Name",
+  "email": "your.email@example.com",
+  "phone": "555-555-5555",
+  "location": "City, State",
+  "summary": "Your professional summary goes here. 2-3 sentences about your experience and what you're looking for.",
+  "experience": [
+    {
+      "title": "Your Current Title",
+      "company": "Current Company",
+      "dates": "Month Year - Present",
+      "location": "City, State",
+      "bullets": [
+        "Achievement or responsibility with measurable impact",
+        "Another key accomplishment",
+        "Skills and tools you used"
+      ]
+    },
+    {
+      "title": "Previous Title",
+      "company": "Previous Company",
+      "dates": "Month Year - Month Year",
+      "location": "City, State",
+      "bullets": [
+        "What you accomplished",
+        "How you made an impact"
+      ]
+    }
+  ],
+  "education": [
+    {
+      "degree": "Your Degree",
+      "school": "University Name",
+      "year": "Year"
+    }
+  ],
+  "skills": [
+    "Skill 1",
+    "Skill 2",
+    "Skill 3",
+    "Tool 1",
+    "Tool 2"
+  ],
+  "certifications": [
+    "Certification 1",
+    "Certification 2"
+  ]
+}
