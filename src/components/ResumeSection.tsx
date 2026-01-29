@@ -19,6 +19,7 @@ import {
 import WorkHistoryEditor, { WorkExperience } from "./WorkHistoryEditor";
 import EducationEditor, { Education } from "./EducationEditor";
 import SkillsEditor from "./SkillsEditor";
+import DownloadResumeButton from "./DownloadResumeButton";
 
 interface ResumeSectionProps {
   userId: string;
@@ -517,22 +518,31 @@ export default function ResumeSection({ userId, currentResumeUrl, onUploadComple
           </TabsContent>
         </Tabs>
 
-        {/* Save Button */}
-        {hasChanges && (
-          <Button onClick={handleSave} disabled={saving} className="w-full">
-            {saving ? (
-              <>
-                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                Saving...
-              </>
-            ) : (
-              <>
-                <Save className="h-4 w-4 mr-2" />
-                Save Changes
-              </>
-            )}
-          </Button>
-        )}
+        {/* Action Buttons */}
+        <div className="flex gap-3">
+          {hasChanges && (
+            <Button onClick={handleSave} disabled={saving} className="flex-1">
+              {saving ? (
+                <>
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  Saving...
+                </>
+              ) : (
+                <>
+                  <Save className="h-4 w-4 mr-2" />
+                  Save Changes
+                </>
+              )}
+            </Button>
+          )}
+          
+          {(workHistory.length > 0 || education.length > 0 || skills.length > 0) && (
+            <DownloadResumeButton 
+              variant={hasChanges ? "outline" : "default"}
+              className={hasChanges ? "" : "w-full"}
+            />
+          )}
+        </div>
       </div>
 
       {/* Preview Dialog */}

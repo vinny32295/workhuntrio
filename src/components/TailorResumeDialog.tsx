@@ -8,7 +8,7 @@ import {
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Loader2, Copy, Check, FileText, Sparkles } from "lucide-react";
+import { Loader2, Copy, Check, FileText, Sparkles, Download } from "lucide-react";
 import { toast } from "sonner";
 import ReactMarkdown from "react-markdown";
 
@@ -29,6 +29,7 @@ export default function TailorResumeDialog({
   job,
 }: TailorResumeDialogProps) {
   const [loading, setLoading] = useState(false);
+  const [downloadingPdf, setDownloadingPdf] = useState(false);
   const [content, setContent] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
 
@@ -75,6 +76,57 @@ export default function TailorResumeDialog({
       setTimeout(() => setCopied(false), 2000);
     } catch {
       toast.error("Failed to copy");
+    }
+  };
+
+  const downloadAsPdf = async () => {
+    if (!content) return;
+    
+    setDownloadingPdf(true);
+
+    try {
+      // Extract professional summary from the tailored content
+      const summaryMatch = content.match(/##\s*(?:PROFESSIONAL\s*)?SUMMARY\s*\n+([\s\S]*?)(?=\n##|\n---|\n#|$)/i);
+      const tailoredSummary = summaryMatch 
+        ? summaryMatch[1].trim().replace(/\*\*/g, '').replace(/\n/g, ' ').slice(0, 500)
+        : undefined;
+
+      const { data, error } = await supabase.functions.invoke("generate-resume-pdf", {
+        body: { tailoredSummary },
+      });
+
+      if (error) throw error;
+
+      if (data.error) {
+        toast.error(data.error);
+        return;
+      }
+
+      // Create a Blob from the HTML content
+      const blob = new Blob([data.html], { type: "text/html" });
+      const url = URL.createObjectURL(blob);
+
+      // Create download link with job-specific filename
+      const link = document.createElement("a");
+      link.href = url;
+      const companyName = job?.company_slug?.replace(/[^a-zA-Z0-9]/g, '_') || 'Company';
+      link.download = data.fileName?.replace('.html', `_${companyName}.html`) || `resume_${companyName}.html`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+
+      // Clean up
+      URL.revokeObjectURL(url);
+
+      toast.success("Resume downloaded! Open in browser and print to PDF.", {
+        description: "Use Ctrl+P / Cmd+P to save as PDF",
+        duration: 5000,
+      });
+    } catch (error) {
+      console.error("Download error:", error);
+      toast.error("Failed to generate resume PDF");
+    } finally {
+      setDownloadingPdf(false);
     }
   };
 
@@ -145,6 +197,24 @@ export default function TailorResumeDialog({
           <div className="flex justify-end gap-2 pt-4 border-t">
             <Button variant="outline" onClick={() => setContent(null)}>
               Regenerate
+            </Button>
+            <Button 
+              variant="outline" 
+              onClick={downloadAsPdf} 
+              disabled={downloadingPdf}
+              className="gap-2"
+            >
+              {downloadingPdf ? (
+                <>
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  Generating...
+                </>
+              ) : (
+                <>
+                  <Download className="h-4 w-4" />
+                  Download PDF
+                </>
+              )}
             </Button>
             <Button onClick={copyToClipboard} className="gap-2">
               {copied ? (
