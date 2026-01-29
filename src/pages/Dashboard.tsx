@@ -6,6 +6,7 @@ import { Crosshair, LogOut, Upload, Settings, BarChart3, Check } from "lucide-re
 import type { User } from "@supabase/supabase-js";
 import ResumeUpload from "@/components/ResumeUpload";
 import JobPreferencesForm from "@/components/JobPreferencesForm";
+import JobApplicationsTable from "@/components/JobApplicationsTable";
 
 interface Profile {
   resume_url: string | null;
@@ -149,13 +150,15 @@ const Dashboard = () => {
           )}
         </div>
 
-        {/* Quick action - View Applications */}
-        <div className="glass-card border border-white/10 rounded-2xl p-6 hover:border-primary/30 transition-colors cursor-pointer mb-8">
-          <BarChart3 className="h-8 w-8 text-primary mb-4" />
-          <h3 className="text-lg font-semibold mb-2">View Applications</h3>
-          <p className="text-sm text-muted-foreground">
-            Track all your auto-applications in one place
-          </p>
+        {/* Job Applications Section */}
+        <div className="glass-card border border-white/10 rounded-2xl p-6 mb-8">
+          <h2 className="text-xl font-semibold mb-6 flex items-center gap-2">
+            <BarChart3 className="h-5 w-5 text-primary" />
+            Job Applications
+          </h2>
+          {user && (
+            <JobApplicationsTable userId={user.id} />
+          )}
         </div>
 
         {/* Status card */}
