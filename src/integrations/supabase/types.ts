@@ -110,6 +110,7 @@ export type Database = {
       profiles: {
         Row: {
           created_at: string
+          education: Json | null
           email: string | null
           full_name: string | null
           id: string
@@ -120,10 +121,12 @@ export type Database = {
           target_roles: string[] | null
           updated_at: string
           user_id: string
+          work_history: Json | null
           work_type: string | null
         }
         Insert: {
           created_at?: string
+          education?: Json | null
           email?: string | null
           full_name?: string | null
           id?: string
@@ -134,10 +137,12 @@ export type Database = {
           target_roles?: string[] | null
           updated_at?: string
           user_id: string
+          work_history?: Json | null
           work_type?: string | null
         }
         Update: {
           created_at?: string
+          education?: Json | null
           email?: string | null
           full_name?: string | null
           id?: string
@@ -148,6 +153,7 @@ export type Database = {
           target_roles?: string[] | null
           updated_at?: string
           user_id?: string
+          work_history?: Json | null
           work_type?: string | null
         }
         Relationships: []
