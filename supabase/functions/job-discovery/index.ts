@@ -33,6 +33,9 @@ interface ClassifiedJob {
   snippet: string;
   atsType: string | null;
   companySlug: string | null;
+  salaryMin: number | null;
+  salaryMax: number | null;
+  salaryCurrency: string | null;
 }
 
 // Classify URL by ATS type
@@ -82,6 +85,9 @@ function filterResults(results: SearchResult[]): ClassifiedJob[] {
         snippet: result.snippet,
         atsType: type,
         companySlug,
+        salaryMin: null,
+        salaryMax: null,
+        salaryCurrency: null,
       });
     }
   }
@@ -142,6 +148,87 @@ function buildSearchQueries(preferences: {
   queries.push(`site:jobs.ashbyhq.com ${workType}`);
   
   return queries;
+}
+
+// Extract salary info using AI
+async function extractSalaryInfo(
+  jobs: ClassifiedJob[],
+  apiKey: string
+): Promise<Map<string, { min: number | null; max: number | null; currency: string }>> {
+  const salaryMap = new Map<string, { min: number | null; max: number | null; currency: string }>();
+  
+  if (jobs.length === 0) return salaryMap;
+  
+  const jobDescriptions = jobs.map((job, idx) => 
+    `Job ${idx + 1} (URL: ${job.url}):
+Title: ${job.title}
+Snippet: ${job.snippet || "No description"}`
+  ).join("\n\n");
+
+  const prompt = `Extract salary information from these job listings. Look for salary ranges, hourly rates, or compensation mentions in titles and snippets.
+
+JOBS:
+${jobDescriptions}
+
+For each job, extract:
+- salary_min: minimum salary in annual USD (convert hourly to annual assuming 2080 hours/year, convert other currencies to USD estimate)
+- salary_max: maximum salary in annual USD
+- currency: original currency mentioned (USD, EUR, GBP, etc.)
+
+If no salary is mentioned, set min and max to null.
+
+Return a JSON array with objects containing "url", "salary_min", "salary_max", "currency" for each job.`;
+
+  try {
+    const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: "google/gemini-3-flash-preview",
+        messages: [
+          { role: "system", content: "You are a salary data extraction AI. Extract salary information from job listings. Always respond with valid JSON arrays. Be conservative - only extract salaries that are clearly stated." },
+          { role: "user", content: prompt },
+        ],
+        temperature: 0.1,
+      }),
+    });
+
+    if (!response.ok) {
+      console.error("AI API error for salary extraction:", response.status);
+      return salaryMap;
+    }
+
+    const data = await response.json();
+    const content = data.choices?.[0]?.message?.content || "";
+
+    // Parse JSON response
+    const jsonMatch = content.match(/\[[\s\S]*?\]/);
+    if (!jsonMatch) {
+      console.log("No JSON found in salary extraction response");
+      return salaryMap;
+    }
+
+    const salaries = JSON.parse(jsonMatch[0]);
+    
+    for (const s of salaries) {
+      if (s.url && (s.salary_min !== null || s.salary_max !== null)) {
+        salaryMap.set(s.url, {
+          min: s.salary_min ? Math.round(s.salary_min) : null,
+          max: s.salary_max ? Math.round(s.salary_max) : null,
+          currency: s.currency || "USD",
+        });
+      }
+    }
+
+    console.log(`Extracted salary info for ${salaryMap.size} jobs`);
+    return salaryMap;
+  } catch (error) {
+    console.error("Salary extraction error:", error);
+    return salaryMap;
+  }
 }
 
 Deno.serve(async (req) => {
@@ -230,11 +317,23 @@ Deno.serve(async (req) => {
     
     console.log(`Found ${classifiedJobs.length} relevant jobs from ${uniqueResults.length} unique results`);
     
+    // Extract salary info using AI (if we have the API key)
+    const lovableApiKey = Deno.env.get("LOVABLE_API_KEY");
+    let salaryMap = new Map<string, { min: number | null; max: number | null; currency: string }>();
+    
+    if (lovableApiKey && classifiedJobs.length > 0) {
+      console.log("Extracting salary info using AI...");
+      salaryMap = await extractSalaryInfo(classifiedJobs, lovableApiKey);
+    }
+    
     // Insert into database
     let inserted = 0;
     let skipped = 0;
+    let withSalary = 0;
     
     for (const job of classifiedJobs) {
+      const salaryInfo = salaryMap.get(job.url);
+      
       const { error } = await supabase.from("discovered_jobs").upsert(
         {
           user_id: userId,
@@ -245,6 +344,9 @@ Deno.serve(async (req) => {
           company_slug: job.companySlug,
           source: "serpapi",
           discovered_at: new Date().toISOString(),
+          salary_min: salaryInfo?.min || null,
+          salary_max: salaryInfo?.max || null,
+          salary_currency: salaryInfo?.currency || null,
         },
         { onConflict: "user_id,url" }
       );
@@ -254,6 +356,7 @@ Deno.serve(async (req) => {
         skipped++;
       } else {
         inserted++;
+        if (salaryInfo) withSalary++;
       }
     }
     
@@ -265,6 +368,7 @@ Deno.serve(async (req) => {
         relevantJobs: classifiedJobs.length,
         inserted,
         skipped,
+        withSalary,
       }),
       { headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
