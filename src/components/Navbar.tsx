@@ -8,9 +8,9 @@ const Navbar = () => {
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
             <div className="relative flex items-center justify-center w-10 h-10">
-              <Crosshair className="h-7 w-7 text-primary absolute" />
-              <span className="absolute text-white font-black text-2xl">$</span>
               <div className="absolute inset-0 bg-primary/20 blur-xl rounded-full" />
+              <span className="absolute text-white font-black text-2xl z-0">$</span>
+              <Crosshair className="h-7 w-7 text-primary absolute z-10" />
             </div>
             <span className="text-xl font-bold tracking-tight">
               work<span className="text-primary">huntr</span>.io
