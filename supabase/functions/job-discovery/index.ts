@@ -48,8 +48,12 @@ function classifyUrl(url: string): { type: string | null; companySlug: string | 
   
   // Check for generic careers page
   if (/\/careers?\/|\/jobs?\//i.test(url)) {
-    const hostname = new URL(url).hostname.replace("www.", "");
-    return { type: "careers_page", companySlug: hostname.split(".")[0] };
+    try {
+      const hostname = new URL(url).hostname.replace("www.", "");
+      return { type: "careers_page", companySlug: hostname.split(".")[0] };
+    } catch {
+      return { type: null, companySlug: null };
+    }
   }
   
   return { type: null, companySlug: null };
@@ -85,16 +89,15 @@ function filterResults(results: SearchResult[]): ClassifiedJob[] {
   return classified;
 }
 
-// Google Custom Search API with API key
-async function googleSearch(
+// SerpAPI search
+async function serpApiSearch(
   query: string,
   apiKey: string,
-  cseId: string,
   numResults: number = 10
 ): Promise<SearchResult[]> {
-  const url = new URL("https://www.googleapis.com/customsearch/v1");
-  url.searchParams.set("key", apiKey);
-  url.searchParams.set("cx", cseId);
+  const url = new URL("https://serpapi.com/search.json");
+  url.searchParams.set("api_key", apiKey);
+  url.searchParams.set("engine", "google");
   url.searchParams.set("q", query);
   url.searchParams.set("num", String(Math.min(numResults, 10)));
   
@@ -102,13 +105,14 @@ async function googleSearch(
   
   if (!response.ok) {
     const errorText = await response.text();
-    console.error("Google API error:", errorText);
-    throw new Error(`Google API error: ${response.status}`);
+    console.error("SerpAPI error:", errorText);
+    throw new Error(`SerpAPI error: ${response.status}`);
   }
   
   const data = await response.json();
   
-  return (data.items || []).map((item: any) => ({
+  // SerpAPI returns organic_results array
+  return (data.organic_results || []).map((item: any) => ({
     title: item.title || "",
     url: item.link || "",
     snippet: item.snippet || "",
@@ -147,20 +151,12 @@ Deno.serve(async (req) => {
   }
 
   try {
-    // Get API key from environment (standard API key, not service account)
-    const googleApiKey = Deno.env.get("GOOGLE_API_KEY");
-    const googleCseId = Deno.env.get("GOOGLE_CSE_ID");
+    // Get SerpAPI key from environment
+    const serpApiKey = Deno.env.get("SERPAPI_KEY");
     
-    if (!googleApiKey) {
+    if (!serpApiKey) {
       return new Response(
-        JSON.stringify({ error: "Google API key not configured" }),
-        { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
-    }
-    
-    if (!googleCseId) {
-      return new Response(
-        JSON.stringify({ error: "Google CSE ID not configured" }),
+        JSON.stringify({ error: "SerpAPI key not configured" }),
         { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
@@ -211,8 +207,9 @@ Deno.serve(async (req) => {
     for (const query of queries) {
       try {
         console.log(`Searching: ${query}`);
-        const results = await googleSearch(query, googleApiKey, googleCseId, 10);
+        const results = await serpApiSearch(query, serpApiKey, 10);
         allResults.push(...results);
+        console.log(`Found ${results.length} results for query`);
         
         // Rate limit: wait 500ms between requests
         await new Promise(resolve => setTimeout(resolve, 500));
@@ -246,7 +243,7 @@ Deno.serve(async (req) => {
           snippet: job.snippet,
           ats_type: job.atsType,
           company_slug: job.companySlug,
-          source: "google_cse",
+          source: "serpapi",
           discovered_at: new Date().toISOString(),
         },
         { onConflict: "user_id,url" }
