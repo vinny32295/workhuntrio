@@ -1,12 +1,10 @@
 import { useState, useEffect } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, Link } from "react-router-dom";
 import { supabase } from "@/lib/supabase";
 import { Button } from "@/components/ui/button";
-import { Crosshair, LogOut, Settings, BarChart3, Check, ChevronDown, Search, User, FileText } from "lucide-react";
+import { Crosshair, LogOut, Settings, BarChart3, ChevronDown, Search, User } from "lucide-react";
 import type { User as SupabaseUser } from "@supabase/supabase-js";
-import ResumeSection from "@/components/ResumeSection";
 import JobPreferencesForm from "@/components/JobPreferencesForm";
-import ProfileInfoForm from "@/components/ProfileInfoForm";
 import JobApplicationsTable from "@/components/JobApplicationsTable";
 import DiscoveredJobsTable from "@/components/DiscoveredJobsTable";
 import StartHuntButton from "@/components/StartHuntButton";
@@ -17,11 +15,13 @@ import {
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
 import {
-  Tabs,
-  TabsContent,
-  TabsList,
-  TabsTrigger,
-} from "@/components/ui/tabs";
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 
 interface Profile {
   resume_url: string | null;
@@ -36,10 +36,8 @@ const Dashboard = () => {
   const [profile, setProfile] = useState<Profile | null>(null);
   const [loading, setLoading] = useState(true);
   const [discoveredJobsKey, setDiscoveredJobsKey] = useState(0);
-  const [activeTab, setActiveTab] = useState("hunt");
   const navigate = useNavigate();
 
-  // Fetch profile data
   const fetchProfile = async (userId: string) => {
     try {
       const { data, error } = await supabase
@@ -82,12 +80,6 @@ const Dashboard = () => {
     return () => subscription.unsubscribe();
   }, [navigate]);
 
-  const handleResumeUpload = (url: string) => {
-    setProfile(prev => prev ? { ...prev, resume_url: url } : { resume_url: url, full_name: null, target_roles: null, work_type: null, phone_number: null });
-  };
-
-  const hasProfileInfo = profile?.full_name && profile?.full_name.trim() !== "";
-
   const handlePreferencesSave = async () => {
     if (user) {
       await new Promise(resolve => setTimeout(resolve, 100));
@@ -106,6 +98,21 @@ const Dashboard = () => {
     navigate("/");
   };
 
+  const getInitials = () => {
+    if (profile?.full_name) {
+      return profile.full_name
+        .split(' ')
+        .map(n => n[0])
+        .join('')
+        .toUpperCase()
+        .slice(0, 2);
+    }
+    if (user?.email) {
+      return user.email[0].toUpperCase();
+    }
+    return 'U';
+  };
+
   if (loading) {
     return (
       <div className="min-h-screen bg-background flex items-center justify-center">
@@ -119,7 +126,7 @@ const Dashboard = () => {
       {/* Header */}
       <header className="border-b border-white/10 bg-background/80 backdrop-blur-sm">
         <div className="container mx-auto px-6 py-4 flex items-center justify-between">
-          <div className="flex items-center gap-2">
+          <Link to="/dashboard" className="flex items-center gap-2">
             <div className="relative flex items-center justify-center w-10 h-10">
               <div className="absolute inset-0 bg-primary/20 blur-xl rounded-full" />
               <span className="absolute text-white font-black text-sm z-0">$</span>
@@ -128,16 +135,37 @@ const Dashboard = () => {
             <span className="text-xl font-bold tracking-tight">
               work<span className="text-primary">huntr</span>.io
             </span>
-          </div>
+          </Link>
 
           <div className="flex items-center gap-4">
-            <span className="text-sm text-muted-foreground hidden sm:block">
-              {user?.email}
-            </span>
-            <Button variant="ghost" size="sm" onClick={handleSignOut}>
-              <LogOut className="h-4 w-4 mr-2" />
-              Sign Out
-            </Button>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="ghost" className="flex items-center gap-2 px-2">
+                  <Avatar className="h-8 w-8">
+                    <AvatarFallback className="bg-primary/20 text-primary text-sm">
+                      {getInitials()}
+                    </AvatarFallback>
+                  </Avatar>
+                  <span className="text-sm text-muted-foreground hidden sm:block max-w-[150px] truncate">
+                    {profile?.full_name || user?.email}
+                  </span>
+                  <ChevronDown className="h-4 w-4 text-muted-foreground" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-56">
+                <DropdownMenuItem asChild>
+                  <Link to="/profile" className="flex items-center gap-2 cursor-pointer">
+                    <User className="h-4 w-4" />
+                    My Profile
+                  </Link>
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem onClick={handleSignOut} className="flex items-center gap-2 cursor-pointer text-destructive focus:text-destructive">
+                  <LogOut className="h-4 w-4" />
+                  Sign Out
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
           </div>
         </div>
       </header>
@@ -145,192 +173,83 @@ const Dashboard = () => {
       {/* Main content */}
       <main className="container mx-auto px-6 py-8">
         <h1 className="text-3xl font-bold mb-2">Welcome to WorkHuntr</h1>
-        <p className="text-muted-foreground mb-6">
+        <p className="text-muted-foreground mb-8">
           Your automated job hunting dashboard
         </p>
 
-        {/* Main Tabs: Profile vs Hunt */}
-        <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-          <TabsList className="grid w-full grid-cols-2 mb-8">
-            <TabsTrigger value="profile" className="gap-2">
-              <User className="h-4 w-4" />
-              My Profile
-            </TabsTrigger>
-            <TabsTrigger value="hunt" className="gap-2">
-              <Crosshair className="h-4 w-4" />
-              Job Hunt
-            </TabsTrigger>
-          </TabsList>
-
-          {/* Profile Tab */}
-          <TabsContent value="profile" className="space-y-8">
-            {/* Profile Info Section */}
-            <div className="glass-card border border-white/10 rounded-2xl p-6">
-              <h2 className="text-xl font-semibold mb-4 flex items-center gap-2">
-                <User className="h-5 w-5 text-primary" />
-                Contact Information
-                {hasProfileInfo && (
+        <div className="space-y-8">
+          {/* Job Preferences Section - Collapsible */}
+          <Collapsible className="glass-card border border-white/10 rounded-2xl" defaultOpen={!hasPreferences}>
+            <CollapsibleTrigger className="w-full p-6 flex items-center justify-between hover:bg-white/5 transition-colors rounded-2xl">
+              <h2 className="text-xl font-semibold flex items-center gap-2">
+                <Settings className="h-5 w-5 text-primary" />
+                Job Preferences
+                {hasPreferences && (
                   <span className="ml-2 text-xs font-normal text-muted-foreground bg-primary/20 px-2 py-0.5 rounded-full">
                     Configured
                   </span>
                 )}
               </h2>
+              <ChevronDown className="h-5 w-5 text-muted-foreground transition-transform duration-200 [[data-state=open]>&]:rotate-180" />
+            </CollapsibleTrigger>
+            <CollapsibleContent className="px-6 pb-6">
               {user && (
-                <ProfileInfoForm 
+                <JobPreferencesForm 
                   userId={user.id}
                   onSave={handlePreferencesSave}
                 />
               )}
-            </div>
+            </CollapsibleContent>
+          </Collapsible>
 
-            {/* Resume & Work History Section */}
-            <div className="glass-card border border-white/10 rounded-2xl p-6">
-              <h2 className="text-xl font-semibold mb-4 flex items-center gap-2">
-                <FileText className="h-5 w-5 text-primary" />
-                Resume & Experience
-                {profile?.resume_url && (
-                  <span className="ml-2 text-xs font-normal text-muted-foreground bg-primary/20 px-2 py-0.5 rounded-full">
-                    Uploaded
-                  </span>
-                )}
+          {/* Start Hunt Section */}
+          <div className="glass-card border border-white/10 rounded-2xl p-6 bg-gradient-to-r from-primary/5 to-transparent">
+            <h2 className="text-xl font-semibold mb-4 flex items-center gap-2">
+              <Crosshair className="h-5 w-5 text-primary" />
+              Job Discovery
+            </h2>
+            <p className="text-muted-foreground mb-6">
+              Search job boards and extract individual job postings matching your preferences.
+            </p>
+            {user && (
+              <StartHuntButton
+                userId={user.id}
+                hasPreferences={!!hasPreferences}
+                onComplete={handleHuntComplete}
+              />
+            )}
+          </div>
+
+          {/* Discovered Jobs Section */}
+          <div className="glass-card border border-white/10 rounded-2xl p-6">
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6">
+              <h2 className="text-xl font-semibold flex items-center gap-2">
+                <Search className="h-5 w-5 text-primary" />
+                Discovered Jobs
               </h2>
-              <p className="text-sm text-muted-foreground mb-4">
-                Upload your resume to auto-extract your work history and education. You can edit the details after parsing.
-              </p>
               {user && (
-                <ResumeSection 
-                  userId={user.id} 
-                  currentResumeUrl={profile?.resume_url}
-                  onUploadComplete={handleResumeUpload}
-                />
-              )}
-            </div>
-
-            {/* Getting Started Card */}
-            <div className="glass-card border border-white/10 rounded-2xl p-8">
-              <h2 className="text-xl font-semibold mb-4">Profile Checklist</h2>
-              <div className="space-y-4">
-                <div className="flex items-center gap-4">
-                  <div className={`w-8 h-8 rounded-full flex items-center justify-center ${
-                    hasProfileInfo ? 'bg-emerald-500/20' : 'bg-primary/20'
-                  }`}>
-                    {hasProfileInfo ? (
-                      <Check className="h-4 w-4 text-emerald-500" />
-                    ) : (
-                      <span className="text-primary font-bold">1</span>
-                    )}
-                  </div>
-                  <span className={hasProfileInfo ? 'text-foreground line-through' : 'text-muted-foreground'}>
-                    Add your contact information
-                  </span>
-                </div>
-                <div className="flex items-center gap-4">
-                  <div className={`w-8 h-8 rounded-full flex items-center justify-center ${
-                    profile?.resume_url ? 'bg-emerald-500/20' : 'bg-muted/50'
-                  }`}>
-                    {profile?.resume_url ? (
-                      <Check className="h-4 w-4 text-emerald-500" />
-                    ) : (
-                      <span className="text-muted-foreground font-bold">2</span>
-                    )}
-                  </div>
-                  <span className={profile?.resume_url ? 'text-foreground line-through' : 'text-muted-foreground'}>
-                    Upload your resume
-                  </span>
-                </div>
-                <div className="flex items-center gap-4">
-                  <div className={`w-8 h-8 rounded-full flex items-center justify-center ${
-                    hasProfileInfo && profile?.resume_url ? 'bg-emerald-500/20' : 'bg-muted/50'
-                  }`}>
-                    {hasProfileInfo && profile?.resume_url ? (
-                      <Check className="h-4 w-4 text-emerald-500" />
-                    ) : (
-                      <span className="text-muted-foreground font-bold">3</span>
-                    )}
-                  </div>
-                  <span className={hasProfileInfo && profile?.resume_url ? 'text-foreground line-through' : 'text-muted-foreground'}>
-                    Review and edit your work history
-                  </span>
-                </div>
-              </div>
-            </div>
-          </TabsContent>
-
-          {/* Job Hunt Tab */}
-          <TabsContent value="hunt" className="space-y-8">
-            {/* Job Preferences Section - Collapsible */}
-            <Collapsible className="glass-card border border-white/10 rounded-2xl" defaultOpen={!hasPreferences}>
-              <CollapsibleTrigger className="w-full p-6 flex items-center justify-between hover:bg-white/5 transition-colors rounded-2xl">
-                <h2 className="text-xl font-semibold flex items-center gap-2">
-                  <Settings className="h-5 w-5 text-primary" />
-                  Job Preferences
-                  {hasPreferences && (
-                    <span className="ml-2 text-xs font-normal text-muted-foreground bg-primary/20 px-2 py-0.5 rounded-full">
-                      Configured
-                    </span>
-                  )}
-                </h2>
-                <ChevronDown className="h-5 w-5 text-muted-foreground transition-transform duration-200 [[data-state=open]>&]:rotate-180" />
-              </CollapsibleTrigger>
-              <CollapsibleContent className="px-6 pb-6">
-                {user && (
-                  <JobPreferencesForm 
-                    userId={user.id}
-                    onSave={handlePreferencesSave}
-                  />
-                )}
-              </CollapsibleContent>
-            </Collapsible>
-
-            {/* Start Hunt Section */}
-            <div className="glass-card border border-white/10 rounded-2xl p-6 bg-gradient-to-r from-primary/5 to-transparent">
-              <h2 className="text-xl font-semibold mb-4 flex items-center gap-2">
-                <Crosshair className="h-5 w-5 text-primary" />
-                Job Discovery
-              </h2>
-              <p className="text-muted-foreground mb-6">
-                Search job boards and extract individual job postings matching your preferences.
-              </p>
-              {user && (
-                <StartHuntButton
-                  userId={user.id}
-                  hasPreferences={!!hasPreferences}
+                <ScoreJobsButton 
+                  hasResume={!!profile?.resume_url}
                   onComplete={handleHuntComplete}
                 />
               )}
             </div>
+            {user && (
+              <DiscoveredJobsTable key={discoveredJobsKey} userId={user.id} />
+            )}
+          </div>
 
-            {/* Discovered Jobs Section */}
-            <div className="glass-card border border-white/10 rounded-2xl p-6">
-              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6">
-                <h2 className="text-xl font-semibold flex items-center gap-2">
-                  <Search className="h-5 w-5 text-primary" />
-                  Discovered Jobs
-                </h2>
-                {user && (
-                  <ScoreJobsButton 
-                    hasResume={!!profile?.resume_url}
-                    onComplete={handleHuntComplete}
-                  />
-                )}
-              </div>
-              {user && (
-                <DiscoveredJobsTable key={discoveredJobsKey} userId={user.id} />
-              )}
-            </div>
-
-            {/* Job Applications Section */}
-            <div className="glass-card border border-white/10 rounded-2xl p-6">
-              <h2 className="text-xl font-semibold mb-6 flex items-center gap-2">
-                <BarChart3 className="h-5 w-5 text-primary" />
-                Job Applications
-              </h2>
-              {user && (
-                <JobApplicationsTable userId={user.id} />
-              )}
-            </div>
-          </TabsContent>
-        </Tabs>
+          {/* Job Applications Section */}
+          <div className="glass-card border border-white/10 rounded-2xl p-6">
+            <h2 className="text-xl font-semibold mb-6 flex items-center gap-2">
+              <BarChart3 className="h-5 w-5 text-primary" />
+              Job Applications
+            </h2>
+            {user && (
+              <JobApplicationsTable userId={user.id} />
+            )}
+          </div>
+        </div>
       </main>
     </div>
   );
