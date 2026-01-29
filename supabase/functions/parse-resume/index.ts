@@ -84,7 +84,7 @@ Deno.serve(async (req) => {
       mimeType = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
     }
 
-    const prompt = `Parse this resume document and extract work history and education in a structured format.
+    const prompt = `Parse this resume document and extract work history, education, and skills in a structured format.
 
 Extract and return a JSON object with:
 {
@@ -107,7 +107,8 @@ Extract and return a JSON object with:
       "startDate": "YYYY",
       "endDate": "YYYY"
     }
-  ]
+  ],
+  "skills": ["Skill 1", "Skill 2", "Tool 1", "Technology 1"]
 }
 
 Rules:
@@ -115,7 +116,8 @@ Rules:
 - Keep descriptions concise (1-2 sentences max)
 - Use "Present" for current positions
 - If dates are unclear, use approximate dates
-- Return empty arrays if no work/education found
+- Extract ALL skills mentioned: technical skills, tools, languages, frameworks, soft skills
+- Return empty arrays if no work/education/skills found
 - Return ONLY valid JSON, no other text or markdown`;
 
     console.log("Calling Gemini with PDF document...");
@@ -132,7 +134,7 @@ Rules:
         messages: [
           { 
             role: "system", 
-            content: "You are a resume parser. Extract work history and education from the attached document. Always respond with valid JSON only, no markdown formatting." 
+            content: "You are a resume parser. Extract work history, education, and skills from the attached document. Always respond with valid JSON only, no markdown formatting." 
           },
           { 
             role: "user", 
@@ -214,12 +216,16 @@ Rules:
       endDate: e.endDate || "",
     }));
 
-    console.log(`Successfully parsed ${workHistory.length} work experiences and ${education.length} education entries`);
+    // Extract skills
+    const skills: string[] = (parsed.skills || []).filter((s: any) => typeof s === 'string' && s.trim() !== '');
+
+    console.log(`Successfully parsed ${workHistory.length} work experiences, ${education.length} education entries, and ${skills.length} skills`);
 
     return new Response(
       JSON.stringify({
         workHistory,
         education,
+        skills,
         success: true,
       }),
       { headers: { ...corsHeaders, "Content-Type": "application/json" } }
