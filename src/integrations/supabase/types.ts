@@ -23,6 +23,9 @@ export type Database = {
           id: string
           is_reviewed: boolean | null
           match_score: number | null
+          salary_currency: string | null
+          salary_max: number | null
+          salary_min: number | null
           snippet: string | null
           source: string | null
           title: string
@@ -37,6 +40,9 @@ export type Database = {
           id?: string
           is_reviewed?: boolean | null
           match_score?: number | null
+          salary_currency?: string | null
+          salary_max?: number | null
+          salary_min?: number | null
           snippet?: string | null
           source?: string | null
           title: string
@@ -51,6 +57,9 @@ export type Database = {
           id?: string
           is_reviewed?: boolean | null
           match_score?: number | null
+          salary_currency?: string | null
+          salary_max?: number | null
+          salary_min?: number | null
           snippet?: string | null
           source?: string | null
           title?: string
