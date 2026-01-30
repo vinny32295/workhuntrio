@@ -553,6 +553,273 @@ function getCitiesFromZip(zip: string | null): string[] {
   return ZIP_TO_CITIES[prefix] || [];
 }
 
+// Discover major local companies based on location using AI + web search
+async function discoverLocalCompanies(
+  city: string,
+  serpApiKey: string,
+  lovableApiKey: string
+): Promise<{ name: string; careersUrl: string | null }[]> {
+  console.log(`Discovering local companies in ${city}...`);
+  
+  // Search for major employers in the area
+  const searchQueries = [
+    `"${city}" major employers headquarters companies`,
+    `top companies to work for in ${city}`,
+    `largest employers "${city}" hiring`
+  ];
+  
+  const companyMentions: string[] = [];
+  
+  for (const query of searchQueries.slice(0, 2)) { // Limit to 2 queries
+    try {
+      const results = await serpApiSearch(query, serpApiKey, 5);
+      for (const result of results) {
+        companyMentions.push(`${result.title}: ${result.snippet}`);
+      }
+      await new Promise(resolve => setTimeout(resolve, 300));
+    } catch (err) {
+      console.error(`Company search failed: ${err}`);
+    }
+  }
+  
+  if (companyMentions.length === 0) {
+    console.log("No company mentions found");
+    return [];
+  }
+  
+  // Use AI to extract company names from the search results
+  const prompt = `Based on these search results about companies in ${city}, extract a list of major company names that likely have headquarters or large offices there.
+
+Search results:
+${companyMentions.slice(0, 15).join("\n")}
+
+Return ONLY a JSON array of company names (strings). Focus on:
+- Companies with headquarters in the area
+- Major employers with offices there
+- Well-known brands with significant presence
+
+Exclude:
+- Staffing/recruiting agencies
+- Generic terms like "top companies"
+- Government entities (unless they're known employers)
+
+Return 5-10 company names. Example: ["Alliance Bernstein", "Nissan", "HCA Healthcare"]`;
+
+  try {
+    const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${lovableApiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: "google/gemini-2.5-flash-lite",
+        messages: [
+          { role: "system", content: "You extract company names from text. Always respond with valid JSON arrays only." },
+          { role: "user", content: prompt },
+        ],
+        temperature: 0.1,
+      }),
+    });
+
+    if (!response.ok) {
+      console.error("AI API error for company extraction:", response.status);
+      return [];
+    }
+
+    const data = await response.json();
+    const content = data.choices?.[0]?.message?.content || "";
+    const jsonMatch = content.match(/\[[\s\S]*?\]/);
+    
+    if (!jsonMatch) {
+      console.log("Could not parse company list");
+      return [];
+    }
+
+    const companies = JSON.parse(jsonMatch[0]) as string[];
+    console.log(`Discovered ${companies.length} local companies: ${companies.join(", ")}`);
+    
+    // Now find career pages for each company
+    const companiesWithCareers: { name: string; careersUrl: string | null }[] = [];
+    
+    for (const company of companies.slice(0, 6)) { // Limit to 6 companies
+      try {
+        const careerResults = await serpApiSearch(`"${company}" careers jobs site`, serpApiKey, 3);
+        
+        // Look for career page URLs in results
+        let careersUrl: string | null = null;
+        for (const result of careerResults) {
+          const urlLower = result.url.toLowerCase();
+          // Check if it looks like a career page
+          if (
+            urlLower.includes("/careers") ||
+            urlLower.includes("/jobs") ||
+            urlLower.includes("greenhouse") ||
+            urlLower.includes("lever") ||
+            urlLower.includes("workday")
+          ) {
+            careersUrl = result.url;
+            break;
+          }
+        }
+        
+        companiesWithCareers.push({ name: company, careersUrl });
+        console.log(`${company}: ${careersUrl || "no careers page found"}`);
+        
+        await new Promise(resolve => setTimeout(resolve, 300));
+      } catch (err) {
+        console.error(`Career search failed for ${company}: ${err}`);
+        companiesWithCareers.push({ name: company, careersUrl: null });
+      }
+    }
+    
+    return companiesWithCareers;
+  } catch (error) {
+    console.error("Company discovery error:", error);
+    return [];
+  }
+}
+
+// Search a company's career page for jobs matching a role
+async function searchCompanyCareerPage(
+  companyName: string,
+  careersUrl: string,
+  targetRoles: string[],
+  lovableApiKey: string
+): Promise<ClassifiedJob[]> {
+  console.log(`Searching ${companyName} careers at ${careersUrl} for roles: ${targetRoles.join(", ")}`);
+  
+  // First, try to get the careers page with Firecrawl (handles JS-rendered pages)
+  const firecrawlApiKey = Deno.env.get("FIRECRAWL_API_KEY");
+  let html: string | null = null;
+  
+  if (firecrawlApiKey) {
+    try {
+      const response = await fetch("https://api.firecrawl.dev/v1/scrape", {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${firecrawlApiKey}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          url: careersUrl,
+          formats: ["html", "links"],
+          onlyMainContent: false,
+          waitFor: 2000,
+        }),
+      });
+      
+      if (response.ok) {
+        const data = await response.json();
+        if (data.success && data.data?.html) {
+          html = data.data.html;
+          console.log(`Firecrawl successfully scraped ${careersUrl}`);
+        }
+      }
+    } catch (err) {
+      console.error(`Firecrawl error for ${careersUrl}:`, err);
+    }
+  }
+  
+  // Fallback to direct fetch
+  if (!html) {
+    const fetchResult = await fetchPageContent(careersUrl, 5000);
+    if (fetchResult.is404) {
+      console.log(`${companyName} careers page returned 404`);
+      return [];
+    }
+    html = fetchResult.html;
+  }
+  
+  if (!html) {
+    console.log(`Could not fetch ${companyName} careers page`);
+    return [];
+  }
+  
+  // Use AI to find relevant job listings
+  const truncatedHtml = html.substring(0, 60000);
+  const rolesPattern = targetRoles.map(r => r.toLowerCase()).join("|");
+  
+  const prompt = `Analyze this career page HTML from ${companyName} and find job listings that match these roles: ${targetRoles.join(", ")}
+
+Page URL: ${careersUrl}
+
+Look for:
+1. Direct links to job postings (URLs containing /jobs/, /careers/, /positions/, etc.)
+2. Job titles that match or are similar to: ${targetRoles.join(", ")}
+3. Links to ATS systems (Greenhouse, Lever, Workday, iCIMS, etc.)
+
+For each matching job found, return:
+- url: The absolute URL to the job posting
+- title: The job title
+- snippet: Brief description if available
+
+Return as a JSON array: [{"url": "...", "title": "...", "snippet": "..."}]
+Maximum 10 jobs. Only include jobs that seem to match the target roles.
+If no matching jobs found, return [].
+
+HTML (truncated):
+${truncatedHtml}`;
+
+  try {
+    const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${lovableApiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: "google/gemini-2.5-flash",
+        messages: [
+          { role: "system", content: "You extract job listings from career pages. Always respond with valid JSON arrays." },
+          { role: "user", content: prompt },
+        ],
+        temperature: 0.1,
+      }),
+    });
+
+    if (!response.ok) {
+      console.error("AI API error for career page extraction:", response.status);
+      return [];
+    }
+
+    const data = await response.json();
+    const content = data.choices?.[0]?.message?.content || "";
+    const jsonMatch = content.match(/\[[\s\S]*?\]/);
+    
+    if (!jsonMatch) {
+      console.log(`No jobs found on ${companyName} career page`);
+      return [];
+    }
+
+    const jobs = JSON.parse(jsonMatch[0]) as Array<{ url: string; title: string; snippet: string }>;
+    console.log(`Found ${jobs.length} matching jobs at ${companyName}`);
+    
+    // Convert to ClassifiedJob format
+    return jobs
+      .filter(j => j.url && j.url.startsWith("http"))
+      .map(j => {
+        const { type, companySlug } = classifyUrl(j.url);
+        return {
+          url: j.url,
+          title: j.title || `Job at ${companyName}`,
+          snippet: j.snippet || "",
+          atsType: type || "careers_page",
+          companySlug: companySlug || companyName.toLowerCase().replace(/\s+/g, "-"),
+          salaryMin: null,
+          salaryMax: null,
+          salaryCurrency: null,
+          fullDescription: null,
+          requirements: null,
+          isDirectPosting: true,
+        };
+      });
+  } catch (error) {
+    console.error(`Career page extraction error for ${companyName}:`, error);
+    return [];
+  }
+}
+
 // Build search queries from user preferences
 function buildSearchQueries(preferences: {
   target_roles: string[] | null;
@@ -1091,6 +1358,53 @@ Deno.serve(async (req) => {
     
     console.log(`Direct postings: ${directPostings.length}, Board pages: ${boardPages.length}, Aggregators: ${aggregatorUrls.length}`);
     
+    // NEW: Discover local companies based on zipcode and search their career pages
+    const cities = getCitiesFromZip(profile?.location_zip);
+    const primaryCity = cities[0];
+    const targetRoles = profile?.target_roles || [];
+    const workTypes = profile?.work_type || [];
+    const hasLocalJobs = workTypes.includes("in-person") || workTypes.includes("hybrid");
+    let localCompanyJobs: ClassifiedJob[] = [];
+    let localCompaniesSearchedCount = 0;
+    
+    if (primaryCity && targetRoles.length > 0 && hasLocalJobs) {
+      console.log(`Discovering local companies in ${primaryCity} for roles: ${targetRoles.join(", ")}`);
+      
+      const localCompanies = await discoverLocalCompanies(primaryCity, serpApiKey, lovableApiKey);
+      console.log(`Found ${localCompanies.length} local companies with potential career pages`);
+      
+      // Search each company's career page for matching jobs
+      const companiesWithCareers = localCompanies.filter(c => c.careersUrl);
+      localCompaniesSearchedCount = companiesWithCareers.length;
+      
+      for (const company of companiesWithCareers.slice(0, 4)) { // Limit to 4 companies
+        if (!company.careersUrl) continue;
+        
+        try {
+          const jobs = await searchCompanyCareerPage(
+            company.name,
+            company.careersUrl,
+            targetRoles,
+            lovableApiKey
+          );
+          
+          // Add jobs that aren't already in our list
+          for (const job of jobs) {
+            if (!seenUrls.has(job.url)) {
+              seenUrls.add(job.url);
+              localCompanyJobs.push(job);
+            }
+          }
+          
+          console.log(`Added ${jobs.length} jobs from ${company.name}`);
+        } catch (err) {
+          console.error(`Error searching ${company.name} careers:`, err);
+        }
+      }
+      
+      console.log(`Total jobs from local companies: ${localCompanyJobs.length}`);
+    }
+    
     // Process board pages in parallel (limit to 3 for speed)
     const boardPagesToProcess = boardPages.slice(0, 3);
     const extractedJobUrls: string[] = [];
@@ -1191,7 +1505,15 @@ Deno.serve(async (req) => {
       }
     }
     
-    console.log(`Total direct postings after all extraction: ${directPostings.length}`);
+    // Add jobs from local company career pages
+    for (const job of localCompanyJobs) {
+      if (!seenUrls.has(job.url)) {
+        seenUrls.add(job.url);
+        directPostings.push(job);
+      }
+    }
+    
+    console.log(`Total direct postings after all extraction (including local companies): ${directPostings.length}`);
     
     // Use background task for enrichment to avoid timeout
     const backgroundTask = processAndSaveJobs(
@@ -1218,6 +1540,8 @@ Deno.serve(async (req) => {
         totalResults: uniqueResults.length,
         boardPagesScraped: boardPagesToProcess.length,
         extractedJobLinks: extractedJobUrls.length,
+        localCompaniesSearched: localCompaniesSearchedCount,
+        localCompanyJobs: localCompanyJobs.length,
         enrichedJobs: Math.min(directPostings.length, maxResults, 10),
         inserted: Math.min(directPostings.length, maxResults, 10),
         skipped: 0,

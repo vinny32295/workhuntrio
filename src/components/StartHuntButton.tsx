@@ -16,6 +16,8 @@ interface HuntResult {
   totalResults: number;
   boardPagesScraped?: number;
   extractedJobLinks?: number;
+  localCompaniesSearched?: number;
+  localCompanyJobs?: number;
   enrichedJobs?: number;
   inserted: number;
   skipped: number;
@@ -112,7 +114,9 @@ export default function StartHuntButton({ userId, hasPreferences, onComplete }: 
           </p>
           <p className="text-muted-foreground">
             Searched {lastResult.queriesRun} queries • Scraped {lastResult.boardPagesScraped || 0} job boards • 
-            Extracted {lastResult.extractedJobLinks || 0} job links • {lastResult.inserted} new jobs saved
+            Extracted {lastResult.extractedJobLinks || 0} job links
+            {lastResult.localCompaniesSearched ? ` • Searched ${lastResult.localCompaniesSearched} local companies (${lastResult.localCompanyJobs || 0} jobs)` : ""}
+            {" • "}{lastResult.inserted} new jobs saved
             {lastResult.withDescription ? ` • ${lastResult.withDescription} with full descriptions` : ""}
             {lastResult.withSalary ? ` • ${lastResult.withSalary} with salary info` : ""}
           </p>
