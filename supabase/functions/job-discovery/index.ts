@@ -94,6 +94,7 @@ interface ClassifiedJob {
   requirements: string[] | null;
   isDirectPosting: boolean;
   isFromTargetUrl?: boolean; // Jobs from user's target URLs bypass relevance filtering
+  sourceUrl?: string; // The target URL that this job was found from
 }
 
 // Check if URL is a direct job posting (not just a board page)
@@ -1435,6 +1436,7 @@ ${truncatedHtml}`;
           requirements: null,
           isDirectPosting: true,
           isFromTargetUrl: true, // Amazon jobs from target URL bypass relevance filtering
+          sourceUrl: pageUrl, // Track which target URL this job came from
         };
       });
   } catch (error) {
@@ -1776,7 +1778,16 @@ async function processAndSaveJobs(
             } else if (job.isFromTargetUrl) {
               // For target URL jobs, calculate proximity score based on location text
               const location = (enrichedJob.extractedLocation || "").toLowerCase();
-              const userZip = userPreferences.location_zip || "";
+              const sourceUrl = (job.sourceUrl || job.url || "").toLowerCase();
+              
+              // Check if the TARGET URL itself filters for US locations
+              // If user's URL explicitly filters for Tennessee/Nashville, trust it
+              const targetUrlHasUSFilter = sourceUrl.includes("tennessee") || 
+                sourceUrl.includes("nashville") ||
+                sourceUrl.includes("state%5b%5d=") || // URL-encoded state filter
+                sourceUrl.includes("united%20states") ||
+                sourceUrl.match(/loc_query=[^&]*usa/i) ||
+                sourceUrl.match(/country=us/i);
               
               // Check if job has ANY US location (including Nashville/TN)
               const hasUSLocation = location.includes("usa") || 
@@ -1788,26 +1799,39 @@ async function processAndSaveJobs(
               const internationalPattern = /\b(jpn|japan|ita|italy|deu|germany|gbr|uk|chn|china|ind|india|aus|australia|mex|mexico|bra|brazil|fra|france|esp|spain|kor|korea|sgp|singapore|isr|israel|nld|netherlands|bel|belgium|swe|sweden|nor|norway|dnk|denmark|fin|finland|irl|ireland|pol|poland|cze|czech|aut|austria|che|switzerland|nzl|zealand|rou|romania|ukr|ukraine|tur|turkey|egy|egypt|zaf|africa|arg|argentina|col|colombia|chl|chile|per|peru|phl|philippines|idn|indonesia|mys|malaysia|tha|thailand|vnm|vietnam|twn|taiwan|hkg|hong kong|osaka|nagoya|tokyo|melbourne|sydney|london|munich|berlin|paris|madrid|toronto|vancouver)\b/i;
               const hasInternationalLocation = internationalPattern.test(location);
               
-              // KEEP jobs that have US locations, even if they also have international locations
-              if (hasUSLocation) {
-                // Jobs with Nashville/TN get highest priority
+              // If target URL has US filter, trust it - keep all jobs from that search
+              if (targetUrlHasUSFilter) {
+                // Jobs with Nashville/TN in their location get highest priority
+                if (hasUSLocation && location.match(/\b(nashville|tennessee|, tn)\b/i)) {
+                  proximityScore = 0.95;
+                  console.log(`Target URL job (LOCAL - TN): "${enrichedJob.title}" at ${enrichedJob.extractedLocation}`);
+                } else if (hasUSLocation) {
+                  proximityScore = 0.85; // Other US locations from filtered search
+                  console.log(`Target URL job (US from filtered search): "${enrichedJob.title}" at ${enrichedJob.extractedLocation}`);
+                } else {
+                  // Even if location parsing failed, trust the user's URL filter
+                  proximityScore = 0.7;
+                  console.log(`Target URL job (TRUSTED from US-filtered search): "${enrichedJob.title}" at ${enrichedJob.extractedLocation}`);
+                }
+              } else if (hasUSLocation) {
+                // No URL filter but job location shows US
                 if (location.match(/\b(nashville|tennessee|, tn)\b/i)) {
                   proximityScore = 0.95;
                   console.log(`Target URL job (LOCAL - TN): "${enrichedJob.title}" at ${enrichedJob.extractedLocation}`);
                 } else {
-                  proximityScore = 0.7; // Other US locations
+                  proximityScore = 0.7;
                   console.log(`Target URL job (US): "${enrichedJob.title}" at ${enrichedJob.extractedLocation}`);
                 }
               } else if (location.match(/\b(remote|virtual|work from home|wfh)\b/i)) {
-                proximityScore = 0.85; // Remote jobs are highly relevant
+                proximityScore = 0.85;
                 console.log(`Target URL job (REMOTE): "${enrichedJob.title}" at ${enrichedJob.extractedLocation}`);
               } else if (hasInternationalLocation) {
-                // SKIP jobs that are ONLY international (no US location)
+                // ONLY skip if there's NO US filter on the target URL
                 console.log(`Target URL job SKIPPED (INTERNATIONAL ONLY): "${enrichedJob.title}" at ${enrichedJob.extractedLocation}`);
                 skipped++;
-                return; // Skip to next job
+                return;
               } else {
-                proximityScore = 0.6; // Unknown location - still include but lower priority
+                proximityScore = 0.6;
                 console.log(`Target URL job (UNKNOWN LOC): "${enrichedJob.title}" at ${enrichedJob.extractedLocation}`);
               }
             }
@@ -2105,6 +2129,7 @@ Deno.serve(async (req) => {
                         requirements: null,
                         isDirectPosting: true,
                         isFromTargetUrl: true, // Mark as from user's target URL
+                        sourceUrl: url, // Track which target URL this job came from
                       });
                     }
                   }
@@ -2112,7 +2137,7 @@ Deno.serve(async (req) => {
               }
               
               // Mark all jobs as from target URL (bypass relevance filtering) and add to targetUrlJobs
-              jobs.forEach(job => { job.isFromTargetUrl = true; });
+              jobs.forEach(job => { job.isFromTargetUrl = true; job.sourceUrl = url; });
               targetUrlJobs.push(...jobs);
               console.log(`[BG] Added ${jobs.length} jobs to targetUrlJobs from: ${url}`);
               
