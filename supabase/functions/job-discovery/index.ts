@@ -1778,12 +1778,20 @@ async function processAndSaveJobs(
               const location = (enrichedJob.extractedLocation || "").toLowerCase();
               const userZip = userPreferences.location_zip || "";
               
-              // Prioritize by location proximity (US > International)
-              if (location.includes("usa") || location.includes("united states") || 
-                  location.match(/\b[a-z]{2},?\s*(us|usa)?\s*$/i) || // State abbreviations like "TN" or "Nashville, TN"
-                  location.match(/\b(nashville|tennessee|tn)\b/i)) {
-                // Jobs in user's state/city get highest priority
-                if (location.includes("nashville") || location.includes(", tn") || location.includes("tennessee")) {
+              // Check if job has ANY US location (including Nashville/TN)
+              const hasUSLocation = location.includes("usa") || 
+                location.includes("united states") || 
+                location.match(/\b(nashville|tennessee|tn|tx|ca|ny|wa|va|nj|ga|nc|fl|oh|il|pa|ma|co|az|or|md|mi|mn|mo|wi|in|sc|al|ky|la|ok|ct|ut|nv|ar|ks|ms|nm|ne|wv|id|nh|me|ri|mt|de|sd|nd|ak|vt|wy|dc)\b/i) ||
+                location.match(/\b(austin|seattle|new york|arlington|bellevue|houston|chicago|los angeles|san francisco|denver|atlanta|boston|dallas|phoenix|philadelphia|san diego|portland)\b/i);
+              
+              // Check if job has ONLY international locations (no US presence)
+              const internationalPattern = /\b(jpn|japan|ita|italy|deu|germany|gbr|uk|chn|china|ind|india|aus|australia|mex|mexico|bra|brazil|fra|france|esp|spain|kor|korea|sgp|singapore|isr|israel|nld|netherlands|bel|belgium|swe|sweden|nor|norway|dnk|denmark|fin|finland|irl|ireland|pol|poland|cze|czech|aut|austria|che|switzerland|nzl|zealand|rou|romania|ukr|ukraine|tur|turkey|egy|egypt|zaf|africa|arg|argentina|col|colombia|chl|chile|per|peru|phl|philippines|idn|indonesia|mys|malaysia|tha|thailand|vnm|vietnam|twn|taiwan|hkg|hong kong|osaka|nagoya|tokyo|melbourne|sydney|london|munich|berlin|paris|madrid|toronto|vancouver)\b/i;
+              const hasInternationalLocation = internationalPattern.test(location);
+              
+              // KEEP jobs that have US locations, even if they also have international locations
+              if (hasUSLocation) {
+                // Jobs with Nashville/TN get highest priority
+                if (location.match(/\b(nashville|tennessee|, tn)\b/i)) {
                   proximityScore = 0.95;
                   console.log(`Target URL job (LOCAL - TN): "${enrichedJob.title}" at ${enrichedJob.extractedLocation}`);
                 } else {
@@ -1793,9 +1801,9 @@ async function processAndSaveJobs(
               } else if (location.match(/\b(remote|virtual|work from home|wfh)\b/i)) {
                 proximityScore = 0.85; // Remote jobs are highly relevant
                 console.log(`Target URL job (REMOTE): "${enrichedJob.title}" at ${enrichedJob.extractedLocation}`);
-              } else if (location.match(/\b(jpn|japan|ita|italy|deu|germany|gbr|uk|chn|china|ind|india|aus|australia|can|canada|mex|mexico|bra|brazil|fra|france|esp|spain|kor|korea|sgp|singapore|isr|israel|nld|netherlands|bel|belgium|swe|sweden|nor|norway|dnk|denmark|fin|finland|irl|ireland|pol|poland|cze|czech|aut|austria|che|switzerland|nzl|zealand|rou|romania|ukr|ukraine|tur|turkey|egy|egypt|zaf|africa|arg|argentina|col|colombia|chl|chile|per|peru|phl|philippines|idn|indonesia|mys|malaysia|tha|thailand|vnm|vietnam|twn|taiwan|hkg|hong kong)\b/i)) {
-                // SKIP international jobs entirely - don't insert them
-                console.log(`Target URL job SKIPPED (INTERNATIONAL): "${enrichedJob.title}" at ${enrichedJob.extractedLocation}`);
+              } else if (hasInternationalLocation) {
+                // SKIP jobs that are ONLY international (no US location)
+                console.log(`Target URL job SKIPPED (INTERNATIONAL ONLY): "${enrichedJob.title}" at ${enrichedJob.extractedLocation}`);
                 skipped++;
                 return; // Skip to next job
               } else {
