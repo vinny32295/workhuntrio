@@ -1373,10 +1373,35 @@ async function extractAmazonJobsFromHtml(
 ): Promise<ClassifiedJob[]> {
   const truncatedHtml = html.substring(0, 100000); // Amazon pages can be large
   
-  const prompt = `This is HTML from an Amazon Jobs search results page.
+  // Parse the URL to extract location filters that the user specified
+  let userLocationFilter = "";
+  try {
+    const url = new URL(pageUrl);
+    const state = url.searchParams.get("state[]") || url.searchParams.getAll("state%5B%5D").join(", ");
+    const locQuery = url.searchParams.get("loc_query") || "";
+    const locGroupId = url.searchParams.get("loc_group_id") || "";
+    
+    if (state) userLocationFilter = state;
+    if (locQuery) userLocationFilter = locQuery;
+    if (locGroupId) userLocationFilter = locGroupId.replace(/-/g, " ");
+  } catch {
+    // Ignore URL parsing errors
+  }
+  
+  const prompt = `This is HTML from an Amazon Jobs search results page filtered for: ${userLocationFilter || "unknown location"}
 Page URL: ${pageUrl}
 
-Extract ONLY actual job listings (NOT category links). Real Amazon job URLs look like:
+IMPORTANT: Extract ONLY jobs from the MAIN SEARCH RESULTS section.
+DO NOT extract jobs from:
+- "Related Jobs" sections
+- "Jobs you might also like" sections  
+- Footer or sidebar recommendations
+- Global/international job listings
+
+The user filtered for ${userLocationFilter || "a specific location"}, so ONLY include jobs that match this location.
+Skip any jobs with international locations like Japan, Germany, UK, Australia, India, etc.
+
+Real Amazon job URLs look like:
 - https://www.amazon.jobs/en/jobs/3170854/supply-chain-program-manager-launch-expansion...
 - Job IDs are 7 digits (e.g., 3170854, 3168457)
 
@@ -1385,12 +1410,14 @@ DO NOT extract category/filter links like:
 - Links with job IDs under 3000000 are likely categories
 
 Look for:
-1. Job cards with titles like "### [Job Title](url)" in markdown
+1. Job cards in the MAIN results list (usually with "job-tile" class or similar)
 2. Links containing "/en/jobs/3XXXXXX/" (7-digit IDs starting with 3)
-3. Job listings with "Posted" dates and "Job ID:" labels
+3. Jobs with US locations matching the filter (${userLocationFilter || "any US location"})
 
 Return a JSON array with jobs found (up to 30):
-[{"url": "https://www.amazon.jobs/en/jobs/3170854/...", "title": "Job Title", "location": "Nashville, TN"}]
+[{"url": "https://www.amazon.jobs/en/jobs/3170854/...", "title": "Job Title", "location": "Nashville, TN, USA"}]
+
+ONLY include jobs whose location contains US states or cities. Skip Japanese, European, or other international jobs.
 
 HTML (truncated):
 ${truncatedHtml}`;
