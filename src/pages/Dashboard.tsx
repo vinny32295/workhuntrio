@@ -29,7 +29,7 @@ interface Profile {
   resume_url: string | null;
   full_name: string | null;
   target_roles: string[] | null;
-  work_type: string | null;
+  work_type: string[] | null;
   phone_number: string | null;
 }
 
@@ -102,7 +102,7 @@ const Dashboard = () => {
     }
   };
 
-  const hasPreferences = profile?.target_roles && profile.target_roles.length > 0 && profile.work_type;
+  const hasPreferences = profile?.target_roles && profile.target_roles.length > 0 && profile.work_type && profile.work_type.length > 0;
 
   const handleHuntComplete = () => {
     setDiscoveredJobsKey(prev => prev + 1);

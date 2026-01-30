@@ -556,31 +556,37 @@ function getCitiesFromZip(zip: string | null): string[] {
 // Build search queries from user preferences
 function buildSearchQueries(preferences: {
   target_roles: string[] | null;
-  work_type: string | null;
+  work_type: string[] | null;
   location_zip: string | null;
 }): string[] {
   const queries: string[] = [];
   const roles = preferences.target_roles || ["product manager", "operations manager"];
-  const workType = preferences.work_type || "remote";
+  const workTypes = preferences.work_type || ["remote"];
   const location = getLocationFromZip(preferences.location_zip);
   const cities = getCitiesFromZip(preferences.location_zip);
   const primaryCity = cities[0] || location || "";
   
+  // Check if any work type requires location
+  const hasInPerson = workTypes.includes("in-person");
+  const hasHybrid = workTypes.includes("hybrid");
+  const hasRemote = workTypes.includes("remote");
+  const needsLocation = (hasInPerson || hasHybrid) && location;
+  
   // For in-person or hybrid, include location in searches
-  const locationTerm = (workType === "in-person" || workType === "hybrid") && location 
-    ? location 
-    : "";
+  const locationTerm = needsLocation ? location : "";
   
   for (const role of roles.slice(0, 3)) {
     const isEntryLevel = isEntryLevelRole(role);
     const isTrade = isTradeRole(role);
     
-    if (workType === "remote") {
+    if (hasRemote) {
       // Remote searches - target specific job postings, not just boards
       queries.push(`site:boards.greenhouse.io/*/jobs remote "${role}"`);
       queries.push(`site:jobs.lever.co remote "${role}" apply`);
       queries.push(`remote "${role}" jobs hiring 2026`);
-    } else if (isTrade) {
+    }
+    
+    if (isTrade && needsLocation) {
       // Trade/skilled labor jobs - these are on contractor sites, unions, and specialty boards
       // Use city name for more specific results
       queries.push(`"${role}" jobs "${primaryCity}" hiring now`);
@@ -591,19 +597,20 @@ function buildSearchQueries(preferences: {
       queries.push(`"${role}" jobs site:*.com/careers "${locationTerm}"`);
       // Try specific employers
       queries.push(`"${role}" "${primaryCity}" -indeed -linkedin -glassdoor -ziprecruiter apply`);
-    } else if (isEntryLevel) {
+    } else if (isEntryLevel && needsLocation) {
       // Entry-level/retail jobs - focus on aggregators and direct company searches
       queries.push(`"${role}" jobs "${locationTerm}" hiring now apply`);
       queries.push(`"${role}" "${locationTerm}" careers site:*.com/careers`);
       queries.push(`site:snagajob.com "${role}" ${locationTerm}`);
       queries.push(`"${role}" jobs near ${locationTerm} apply online`);
       queries.push(`"now hiring" "${role}" ${locationTerm}`);
-    } else {
+    } else if (hasInPerson || hasHybrid) {
       // Professional in-person/hybrid - include ATS sites
       queries.push(`site:boards.greenhouse.io/*/jobs ${locationTerm} "${role}"`);
       queries.push(`site:jobs.lever.co ${locationTerm} "${role}" apply`);
       queries.push(`"${role}" jobs ${locationTerm} hiring 2026`);
-      queries.push(`${workType} "${role}" jobs ${locationTerm}`);
+      if (hasHybrid) queries.push(`hybrid "${role}" jobs ${locationTerm}`);
+      if (hasInPerson) queries.push(`"in-person" "${role}" jobs ${locationTerm}`);
     }
   }
   
@@ -614,8 +621,8 @@ function buildSearchQueries(preferences: {
       queries.push(`site:apply.workable.com/*/j ${locationTerm}`);
       queries.push(`site:jobs.ashbyhq.com ${locationTerm}`);
     } else {
-      queries.push(`site:apply.workable.com/*/j ${workType}`);
-      queries.push(`site:jobs.ashbyhq.com ${workType}`);
+      queries.push(`site:apply.workable.com/*/j ${hasRemote ? "remote" : locationTerm}`);
+      queries.push(`site:jobs.ashbyhq.com ${hasRemote ? "remote" : locationTerm}`);
     }
   }
   
@@ -810,14 +817,14 @@ async function processAndSaveJobs(
   lovableApiKey: string,
   supabase: any,
   userId: string,
-  userPreferences: { work_type: string | null; location_zip: string | null; search_radius_miles: number | null }
+  userPreferences: { work_type: string[] | null; location_zip: string | null; search_radius_miles: number | null }
 ): Promise<{ inserted: number; skipped: number; withSalary: number; withDescription: number; filteredByLocation: number }> {
   const enrichedJobs: (ClassifiedJob & { extractedLocation: string | null })[] = [];
   const jobsToProcess = directPostings.slice(0, Math.min(maxResults, 10)); // Reduced to 10 for speed
   
-  const requiresLocationValidation = 
-    (userPreferences.work_type === "in-person" || userPreferences.work_type === "hybrid") &&
-    userPreferences.location_zip;
+  const workTypes = userPreferences.work_type || [];
+  const hasInPersonOrHybrid = workTypes.includes("in-person") || workTypes.includes("hybrid");
+  const requiresLocationValidation = hasInPersonOrHybrid && userPreferences.location_zip;
   
   const radiusMiles = userPreferences.search_radius_miles || 50;
   
@@ -1047,7 +1054,7 @@ Deno.serve(async (req) => {
     
     const queries = buildSearchQueries(profile || { target_roles: null, work_type: null, location_zip: null });
     
-    console.log(`User preferences: work_type=${profile?.work_type}, location_zip=${profile?.location_zip}`);
+    console.log(`User preferences: work_type=${JSON.stringify(profile?.work_type)}, location_zip=${profile?.location_zip}`);
     console.log(`Running ${queries.length} search queries for user ${userId}`);
     
     const allResults: SearchResult[] = [];

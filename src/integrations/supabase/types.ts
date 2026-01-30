@@ -123,7 +123,7 @@ export type Database = {
           updated_at: string
           user_id: string
           work_history: Json | null
-          work_type: string | null
+          work_type: string[] | null
         }
         Insert: {
           created_at?: string
@@ -140,7 +140,7 @@ export type Database = {
           updated_at?: string
           user_id: string
           work_history?: Json | null
-          work_type?: string | null
+          work_type?: string[] | null
         }
         Update: {
           created_at?: string
@@ -157,7 +157,7 @@ export type Database = {
           updated_at?: string
           user_id?: string
           work_history?: Json | null
-          work_type?: string | null
+          work_type?: string[] | null
         }
         Relationships: []
       }

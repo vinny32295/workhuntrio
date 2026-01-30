@@ -4,7 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
-import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
+
 import { Slider } from "@/components/ui/slider";
 import { X, Plus, Loader2, MapPin, Briefcase, Building2 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
@@ -16,7 +16,7 @@ interface JobPreferencesFormProps {
 
 interface Preferences {
   target_roles: string[];
-  work_type: string | null;
+  work_type: string[];
   location_zip: string | null;
   search_radius_miles: number;
 }
@@ -35,7 +35,7 @@ const SUGGESTED_ROLES = [
 const JobPreferencesForm = ({ userId, onSave }: JobPreferencesFormProps) => {
   const [preferences, setPreferences] = useState<Preferences>({
     target_roles: [],
-    work_type: null,
+    work_type: [],
     location_zip: null,
     search_radius_miles: 50,
   });
@@ -61,7 +61,7 @@ const JobPreferencesForm = ({ userId, onSave }: JobPreferencesFormProps) => {
       if (data) {
         setPreferences({
           target_roles: data.target_roles || [],
-          work_type: data.work_type,
+          work_type: data.work_type || [],
           location_zip: data.location_zip,
           search_radius_miles: data.search_radius_miles || 50,
         });
@@ -207,39 +207,45 @@ const JobPreferencesForm = ({ userId, onSave }: JobPreferencesFormProps) => {
         )}
       </div>
 
-      {/* Work Type */}
+      {/* Work Type - Multi-select */}
       <div className="space-y-4">
         <div className="flex items-center gap-2">
           <Building2 className="h-5 w-5 text-primary" />
           <Label className="text-base font-semibold">Work Type</Label>
+          <span className="text-xs text-muted-foreground">(select all that apply)</span>
         </div>
         
-        <RadioGroup
-          value={preferences.work_type || ""}
-          onValueChange={(value) => setPreferences(prev => ({ ...prev, work_type: value }))}
-          className="grid grid-cols-3 gap-4"
-        >
+        <div className="grid grid-cols-3 gap-4">
           {[
             { value: 'remote', label: 'Remote', desc: 'Work from anywhere' },
             { value: 'hybrid', label: 'Hybrid', desc: 'Mix of office & home' },
             { value: 'in-person', label: 'In-Person', desc: 'Office-based' },
-          ].map(option => (
-            <div key={option.value}>
-              <RadioGroupItem
-                value={option.value}
-                id={option.value}
-                className="peer sr-only"
-              />
-              <Label
-                htmlFor={option.value}
-                className="flex flex-col items-center justify-center rounded-xl border-2 border-white/10 bg-transparent p-4 hover:bg-white/5 hover:border-white/20 peer-data-[state=checked]:border-primary peer-data-[state=checked]:bg-primary/10 cursor-pointer transition-all"
+          ].map(option => {
+            const isSelected = preferences.work_type.includes(option.value);
+            return (
+              <button
+                key={option.value}
+                type="button"
+                onClick={() => {
+                  setPreferences(prev => ({
+                    ...prev,
+                    work_type: isSelected
+                      ? prev.work_type.filter(t => t !== option.value)
+                      : [...prev.work_type, option.value],
+                  }));
+                }}
+                className={`flex flex-col items-center justify-center rounded-xl border-2 p-4 transition-all ${
+                  isSelected
+                    ? 'border-primary bg-primary/10'
+                    : 'border-white/10 bg-transparent hover:bg-white/5 hover:border-white/20'
+                }`}
               >
                 <span className="font-medium">{option.label}</span>
                 <span className="text-xs text-muted-foreground mt-1">{option.desc}</span>
-              </Label>
-            </div>
-          ))}
-        </RadioGroup>
+              </button>
+            );
+          })}
+        </div>
       </div>
 
       {/* Location */}
@@ -280,7 +286,7 @@ const JobPreferencesForm = ({ userId, onSave }: JobPreferencesFormProps) => {
           </div>
         </div>
         
-        {preferences.work_type === 'remote' && (
+        {preferences.work_type.length === 1 && preferences.work_type.includes('remote') && (
           <p className="text-sm text-muted-foreground italic">
             💡 Location preferences help us find remote jobs that prefer candidates in your area.
           </p>
