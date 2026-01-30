@@ -1929,9 +1929,11 @@ Deno.serve(async (req) => {
                 if (html) {
                   const jobLinks = await extractJobLinksFromPage(html, url, lovableApiKey);
                   console.log(`[BG] Firecrawl extracted ${jobLinks.length} job links from Amazon.jobs`);
+                  // Use local set for dedup within this URL only (don't use seenUrls)
+                  const localSeen = new Set<string>();
                   for (const jobUrl of jobLinks) {
-                    if (!seenUrls.has(jobUrl)) {
-                      seenUrls.add(jobUrl);
+                    if (!localSeen.has(jobUrl)) {
+                      localSeen.add(jobUrl);
                       jobs.push({
                         url: jobUrl,
                         title: "",
@@ -1952,9 +1954,10 @@ Deno.serve(async (req) => {
                   const fetchResult = await fetchPageContent(url, 5000);
                   if (fetchResult.html && !fetchResult.is404) {
                     const jobLinks = await extractJobLinksFromPage(fetchResult.html, url, lovableApiKey);
+                    const localSeen = new Set<string>();
                     for (const jobUrl of jobLinks) {
-                      if (!seenUrls.has(jobUrl)) {
-                        seenUrls.add(jobUrl);
+                      if (!localSeen.has(jobUrl)) {
+                        localSeen.add(jobUrl);
                         jobs.push({
                           url: jobUrl,
                           title: "",
@@ -1977,9 +1980,10 @@ Deno.serve(async (req) => {
                 const fetchResult = await fetchPageContent(url, 5000);
                 if (fetchResult.html && !fetchResult.is404) {
                   const jobLinks = await extractJobLinksFromPage(fetchResult.html, url, lovableApiKey);
+                  const localSeen = new Set<string>();
                   for (const jobUrl of jobLinks) {
-                    if (!seenUrls.has(jobUrl)) {
-                      seenUrls.add(jobUrl);
+                    if (!localSeen.has(jobUrl)) {
+                      localSeen.add(jobUrl);
                       const { type, companySlug } = classifyUrl(jobUrl);
                       jobs.push({
                         url: jobUrl,
@@ -1999,8 +2003,9 @@ Deno.serve(async (req) => {
                 }
               }
               
-              // Add all jobs to targetUrlJobs (they're already deduped within the extraction)
+              // Add all jobs to targetUrlJobs - dedup happens in final merge
               targetUrlJobs.push(...jobs);
+              console.log(`[BG] Added ${jobs.length} jobs to targetUrlJobs from: ${url}`);
               
               console.log(`[BG] Found ${jobs.length} jobs from target URL: ${url}`);
             } catch (err) {
@@ -2170,34 +2175,43 @@ Deno.serve(async (req) => {
           }
         }
         
-        // Add jobs from target company URLs (prioritize these)
-        for (const job of targetUrlJobs) {
-          if (!seenUrls.has(job.url)) {
-            seenUrls.add(job.url);
-            allJobs.push(job);
-          }
-        }
+        // Add jobs from target company URLs (prioritize these - don't filter by seenUrls)
+        console.log(`[BG] Target URL jobs before merge: ${targetUrlJobs.length}`);
         
-        console.log(`[BG] Total jobs after all extraction: ${allJobs.length}`);
+        console.log(`[BG] Total jobs after all extraction: allJobs=${allJobs.length}, targetUrlJobs=${targetUrlJobs.length}, localCompanyJobs=${localCompanyJobs.length}`);
         
         // Prioritize target URL jobs, then local company jobs by putting them first
-        const prioritizedPostings = [
-          ...targetUrlJobs, // Target URLs first (user-specified)
-          ...localCompanyJobs.filter(j => !targetUrlJobs.some(t => t.url === j.url)),
-          ...allJobs.filter(j => !localCompanyJobs.some(lc => lc.url === j.url) && !targetUrlJobs.some(t => t.url === j.url))
-        ];
-        
-        // Dedupe the prioritized list
-        const finalPostings: ClassifiedJob[] = [];
+        // Use a fresh deduplication set for the final merge
         const finalSeenUrls = new Set<string>();
-        for (const job of prioritizedPostings) {
+        const finalPostings: ClassifiedJob[] = [];
+        
+        // First add target URL jobs (highest priority)
+        for (const job of targetUrlJobs) {
+          if (!finalSeenUrls.has(job.url)) {
+            finalSeenUrls.add(job.url);
+            finalPostings.push(job);
+          }
+        }
+        console.log(`[BG] After adding targetUrlJobs: ${finalPostings.length}`);
+        
+        // Then add local company jobs
+        for (const job of localCompanyJobs) {
+          if (!finalSeenUrls.has(job.url)) {
+            finalSeenUrls.add(job.url);
+            finalPostings.push(job);
+          }
+        }
+        console.log(`[BG] After adding localCompanyJobs: ${finalPostings.length}`);
+        
+        // Finally add other jobs from general search
+        for (const job of allJobs) {
           if (!finalSeenUrls.has(job.url)) {
             finalSeenUrls.add(job.url);
             finalPostings.push(job);
           }
         }
         
-        console.log(`[BG] Prioritized ${targetUrlJobs.length} target URL jobs + ${localCompanyJobs.length} local company jobs. Final postings: ${finalPostings.length}`);
+        console.log(`[BG] Final postings count: ${finalPostings.length}`);
         
         // Process and save jobs
         await processAndSaveJobs(
