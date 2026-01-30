@@ -19,7 +19,18 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { ExternalLink, Plus, Check, Loader2, Search, Filter, X, Sparkles, Lock, ArrowUpDown, ArrowUp, ArrowDown } from "lucide-react";
+import { ExternalLink, Plus, Check, Loader2, Search, Filter, X, Sparkles, Lock, ArrowUpDown, Trash2 } from "lucide-react";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
 import { toast } from "sonner";
 import TailorResumeDialog from "./TailorResumeDialog";
 import {
@@ -79,6 +90,8 @@ export default function DiscoveredJobsTable({ userId }: DiscoveredJobsTableProps
   const [tailorDialogOpen, setTailorDialogOpen] = useState(false);
   const [selectedJob, setSelectedJob] = useState<DiscoveredJob | null>(null);
   const [userTier, setUserTier] = useState<string>("free");
+  const [deletingJob, setDeletingJob] = useState<string | null>(null);
+  const [clearingAll, setClearingAll] = useState(false);
 
   // Debounce search input
   useEffect(() => {
@@ -227,6 +240,46 @@ export default function DiscoveredJobsTable({ userId }: DiscoveredJobsTableProps
     }
   };
 
+  const deleteJob = async (jobId: string) => {
+    setDeletingJob(jobId);
+    try {
+      const { error } = await supabase
+        .from("discovered_jobs")
+        .delete()
+        .eq("id", jobId);
+
+      if (error) throw error;
+
+      setJobs(jobs.filter(j => j.id !== jobId));
+      toast.success("Job removed");
+    } catch (error) {
+      console.error("Error deleting job:", error);
+      toast.error("Failed to remove job");
+    } finally {
+      setDeletingJob(null);
+    }
+  };
+
+  const clearAllJobs = async () => {
+    setClearingAll(true);
+    try {
+      const { error } = await supabase
+        .from("discovered_jobs")
+        .delete()
+        .eq("user_id", userId);
+
+      if (error) throw error;
+
+      setJobs([]);
+      toast.success("All discovered jobs cleared");
+    } catch (error) {
+      console.error("Error clearing jobs:", error);
+      toast.error("Failed to clear jobs");
+    } finally {
+      setClearingAll(false);
+    }
+  };
+
   const getATSBadgeColor = (atsType: string | null) => {
     switch (atsType) {
       case "greenhouse": return "bg-emerald-500/20 text-emerald-400";
@@ -317,17 +370,46 @@ export default function DiscoveredJobsTable({ userId }: DiscoveredJobsTableProps
       </div>
 
       {/* Results count */}
-      <div className="mb-4 flex items-center gap-2">
-        {unreviewedCount > 0 && (
-          <Badge variant="secondary" className="bg-primary/20 text-primary">
-            {unreviewedCount} new
-          </Badge>
-        )}
-        <span className="text-sm text-muted-foreground">
-          {filteredJobs.length === jobs.length
-            ? `${jobs.length} jobs discovered`
-            : `Showing ${filteredJobs.length} of ${jobs.length} jobs`}
-        </span>
+      <div className="mb-4 flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          {unreviewedCount > 0 && (
+            <Badge variant="secondary" className="bg-primary/20 text-primary">
+              {unreviewedCount} new
+            </Badge>
+          )}
+          <span className="text-sm text-muted-foreground">
+            {filteredJobs.length === jobs.length
+              ? `${jobs.length} jobs discovered`
+              : `Showing ${filteredJobs.length} of ${jobs.length} jobs`}
+          </span>
+        </div>
+        <AlertDialog>
+          <AlertDialogTrigger asChild>
+            <Button variant="ghost" size="sm" className="text-destructive hover:text-destructive gap-1">
+              <Trash2 className="h-4 w-4" />
+              Clear All
+            </Button>
+          </AlertDialogTrigger>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Clear all discovered jobs?</AlertDialogTitle>
+              <AlertDialogDescription>
+                This will permanently remove all {jobs.length} discovered jobs. This action cannot be undone.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel>Cancel</AlertDialogCancel>
+              <AlertDialogAction
+                onClick={clearAllJobs}
+                disabled={clearingAll}
+                className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              >
+                {clearingAll ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
+                Clear All
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
       </div>
 
       {filteredJobs.length === 0 ? (
@@ -484,6 +566,19 @@ export default function DiscoveredJobsTable({ userId }: DiscoveredJobsTableProps
                         )}
                       </Button>
                     )}
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => deleteJob(job.id)}
+                      disabled={deletingJob === job.id}
+                      className="text-muted-foreground hover:text-destructive"
+                    >
+                      {deletingJob === job.id ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      ) : (
+                        <Trash2 className="h-4 w-4" />
+                      )}
+                    </Button>
                   </div>
                 </TableCell>
               </TableRow>
