@@ -29,3 +29,6 @@ verify_jwt = false
 
 [functions.admin-stats]
 verify_jwt = false
+
+[functions.admin-update-tier]
+verify_jwt = false
