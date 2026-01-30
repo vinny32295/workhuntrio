@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { Link } from "react-router-dom";
 import { supabase } from "@/lib/supabase";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -415,11 +416,17 @@ export default function DiscoveredJobsTable({ userId }: DiscoveredJobsTableProps
                               <Lock className="h-4 w-4 text-muted-foreground" />
                             </Button>
                           </TooltipTrigger>
-                          <TooltipContent side="top" className="max-w-[200px] text-center">
+                          <TooltipContent side="top" className="max-w-[220px] text-center p-3">
                             <p className="font-medium">Upgrade to Pro</p>
-                            <p className="text-xs text-muted-foreground">
+                            <p className="text-xs text-muted-foreground mb-2">
                               Tailor your resume & cover letter for each job with AI
                             </p>
+                            <Link 
+                              to="/#pricing" 
+                              className="text-xs text-primary hover:underline font-medium"
+                            >
+                              View pricing →
+                            </Link>
                           </TooltipContent>
                         </Tooltip>
                       </TooltipProvider>
