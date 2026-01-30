@@ -1755,6 +1755,9 @@ async function processAndSaveJobs(
             
             // 3. Validate location (only for in-person/hybrid AND not from target URL)
             // Jobs from user's target URLs bypass location filtering since user explicitly chose that company
+            // But we calculate a proximity score to prioritize closer jobs
+            let proximityScore = 0.5; // Default score for jobs without location validation
+            
             if (requiresLocationValidation && !job.isFromTargetUrl) {
               const validation = await validateJobLocation(
                 enrichedJob.extractedLocation,
@@ -1769,11 +1772,37 @@ async function processAndSaveJobs(
                 filteredByLocation++;
                 return;
               }
-            } else if (job.isFromTargetUrl && requiresLocationValidation) {
-              console.log(`Target URL job (bypassing location filter): "${enrichedJob.title}" at ${enrichedJob.extractedLocation}`);
+              proximityScore = 0.8; // Jobs that pass location validation get high score
+            } else if (job.isFromTargetUrl) {
+              // For target URL jobs, calculate proximity score based on location text
+              const location = (enrichedJob.extractedLocation || "").toLowerCase();
+              const userZip = userPreferences.location_zip || "";
+              
+              // Prioritize by location proximity (US > International)
+              if (location.includes("usa") || location.includes("united states") || 
+                  location.match(/\b[a-z]{2},?\s*(us|usa)?\s*$/i) || // State abbreviations like "TN" or "Nashville, TN"
+                  location.match(/\b(nashville|tennessee|tn)\b/i)) {
+                // Jobs in user's state/city get highest priority
+                if (location.includes("nashville") || location.includes(", tn") || location.includes("tennessee")) {
+                  proximityScore = 0.95;
+                  console.log(`Target URL job (LOCAL - TN): "${enrichedJob.title}" at ${enrichedJob.extractedLocation}`);
+                } else {
+                  proximityScore = 0.7; // Other US locations
+                  console.log(`Target URL job (US): "${enrichedJob.title}" at ${enrichedJob.extractedLocation}`);
+                }
+              } else if (location.match(/\b(remote|virtual|work from home|wfh)\b/i)) {
+                proximityScore = 0.85; // Remote jobs are highly relevant
+                console.log(`Target URL job (REMOTE): "${enrichedJob.title}" at ${enrichedJob.extractedLocation}`);
+              } else if (location.match(/\b(jpn|japan|ita|italy|deu|germany|gbr|uk|chn|china|ind|india|aus|australia|can|canada|mex|mexico|bra|brazil|fra|france|esp|spain|kor|korea)\b/i)) {
+                proximityScore = 0.2; // International jobs get low priority
+                console.log(`Target URL job (INTERNATIONAL): "${enrichedJob.title}" at ${enrichedJob.extractedLocation}`);
+              } else {
+                proximityScore = 0.5; // Unknown location
+                console.log(`Target URL job (UNKNOWN LOC): "${enrichedJob.title}" at ${enrichedJob.extractedLocation}`);
+              }
             }
             
-            // 4. Insert into database
+            // 4. Insert into database with proximity-based match_score
             const { error } = await serviceClient.from("discovered_jobs").upsert(
               {
                 user_id: userId,
@@ -1782,11 +1811,12 @@ async function processAndSaveJobs(
                 snippet: enrichedJob.fullDescription || enrichedJob.snippet,
                 ats_type: enrichedJob.atsType,
                 company_slug: enrichedJob.companySlug,
-                source: "serpapi_enriched",
+                source: job.isFromTargetUrl ? "target_url" : "serpapi_enriched",
                 discovered_at: new Date().toISOString(),
                 salary_min: enrichedJob.salaryMin,
                 salary_max: enrichedJob.salaryMax,
                 salary_currency: enrichedJob.salaryCurrency || "USD",
+                match_score: proximityScore, // Use match_score to sort by proximity
               },
               { onConflict: "user_id,url" }
             );
