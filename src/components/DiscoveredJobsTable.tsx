@@ -479,15 +479,23 @@ export default function DiscoveredJobsTable({ userId }: DiscoveredJobsTableProps
                 <TableCell>
                   {job.match_score !== null ? (
                     <div className="flex items-center gap-2">
-                      <div className="w-12 h-2 bg-muted rounded-full overflow-hidden">
-                        <div 
-                          className={`h-full rounded-full ${getScoreColor(job.match_score)}`}
-                          style={{ width: `${job.match_score}%` }}
-                        />
-                      </div>
-                      <span className={`text-xs font-medium ${getScoreTextColor(job.match_score)}`}>
-                        {job.match_score}%
-                      </span>
+                      {/* match_score is now 0-1 (proximity), convert to percentage */}
+                      {(() => {
+                        const scorePercent = Math.round(job.match_score * 100);
+                        return (
+                          <>
+                            <div className="w-12 h-2 bg-muted rounded-full overflow-hidden">
+                              <div 
+                                className={`h-full rounded-full ${getScoreColor(scorePercent)}`}
+                                style={{ width: `${scorePercent}%` }}
+                              />
+                            </div>
+                            <span className={`text-xs font-medium ${getScoreTextColor(scorePercent)}`}>
+                              {scorePercent}%
+                            </span>
+                          </>
+                        );
+                      })()}
                     </div>
                   ) : (
                     <span className="text-xs text-muted-foreground">—</span>
