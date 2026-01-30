@@ -1533,8 +1533,7 @@ async function processAndSaveJobs(
     Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
   );
   
-  const enrichedJobs: (ClassifiedJob & { extractedLocation: string | null })[] = [];
-  // Process up to maxResults (based on user tier: free=5, pro=25, premium=50)
+  // Process up to maxResults (based on user tier: free=10, pro=50, premium=100)
   const jobsToProcess = directPostings.slice(0, maxResults);
   
   console.log(`Background task started: processing ${jobsToProcess.length} jobs for user ${userId}`);
@@ -1542,53 +1541,11 @@ async function processAndSaveJobs(
   const workTypes = userPreferences.work_type || [];
   const hasInPersonOrHybrid = workTypes.includes("in-person") || workTypes.includes("hybrid");
   const requiresLocationValidation = hasInPersonOrHybrid && userPreferences.location_zip;
-  
+  const targetRoles = userPreferences.target_roles || [];
   const radiusMiles = userPreferences.search_radius_miles || 50;
   
   console.log(`Location validation: ${requiresLocationValidation ? `enabled (${radiusMiles} mi from ${userPreferences.location_zip})` : "disabled (remote)"}`);
   
-  // Process in parallel batches of 3 for speed
-  for (let i = 0; i < jobsToProcess.length; i += 3) {
-    const batch = jobsToProcess.slice(i, i + 3);
-    const results = await Promise.all(
-      batch.map(async (job) => {
-        try {
-          console.log(`Fetching job details: ${job.url}`);
-          const fetchResult = await fetchPageContent(job.url, 4000); // Shorter timeout
-          
-          // Skip 404 pages entirely - they shouldn't appear in discovered jobs
-          if (fetchResult.is404) {
-            console.log(`Skipping 404 page: ${job.url}`);
-            return null; // Return null to filter out later
-          }
-          
-          if (fetchResult.html) {
-            const details = await extractJobDetails(fetchResult.html, job.url, lovableApiKey);
-            return {
-              ...job,
-              title: details.title || job.title || "Untitled Position",
-              snippet: details.description || job.snippet,
-              fullDescription: details.description,
-              requirements: details.requirements,
-              salaryMin: details.salaryMin,
-              salaryMax: details.salaryMax,
-              salaryCurrency: details.salaryCurrency,
-              companySlug: details.company || job.companySlug,
-              extractedLocation: details.location,
-            };
-          }
-          return { ...job, extractedLocation: null };
-        } catch (err) {
-          console.error(`Error processing ${job.url}:`, err);
-          return { ...job, extractedLocation: null };
-        }
-      })
-    );
-    // Filter out null results (404 pages)
-    enrichedJobs.push(...results.filter((r): r is NonNullable<typeof r> => r !== null));
-  }
-  
-  // Insert into database with location and relevance validation
   let inserted = 0;
   let skipped = 0;
   let withSalary = 0;
@@ -1596,67 +1553,115 @@ async function processAndSaveJobs(
   let filteredByLocation = 0;
   let filteredByRelevance = 0;
   
-  const targetRoles = userPreferences.target_roles || [];
-  
-  for (const job of enrichedJobs) {
-    // Validate job relevance to target roles
-    if (targetRoles.length > 0) {
-      const relevanceCheck = await isJobRelevantToRoles(job.title || "", targetRoles, lovableApiKey);
-      console.log(`Relevance check for "${job.title}": ${relevanceCheck.isRelevant ? "RELEVANT" : "NOT RELEVANT"} - ${relevanceCheck.reason}`);
+  try {
+    // Process in parallel batches of 5 for speed (reduced from fetching all first)
+    for (let i = 0; i < jobsToProcess.length; i += 5) {
+      const batch = jobsToProcess.slice(i, i + 5);
       
-      if (!relevanceCheck.isRelevant) {
-        console.log(`Skipping irrelevant job: ${job.title}`);
-        filteredByRelevance++;
-        continue;
-      }
-    }
-    
-    // Validate location for in-person/hybrid jobs
-    if (requiresLocationValidation) {
-      const validation = await validateJobLocation(
-        job.extractedLocation,
-        userPreferences.location_zip!,
-        radiusMiles,
-        lovableApiKey
+      // Fetch, validate, and insert each job in the batch
+      await Promise.all(
+        batch.map(async (job) => {
+          try {
+            // 1. Fetch job details
+            console.log(`Fetching: ${job.url}`);
+            const fetchResult = await fetchPageContent(job.url, 3000);
+            
+            if (fetchResult.is404) {
+              console.log(`Skipping 404: ${job.url}`);
+              skipped++;
+              return;
+            }
+            
+            let enrichedJob = { ...job, extractedLocation: null as string | null };
+            
+            if (fetchResult.html) {
+              const details = await extractJobDetails(fetchResult.html, job.url, lovableApiKey);
+              enrichedJob = {
+                ...job,
+                title: details.title || job.title || "Untitled Position",
+                snippet: details.description || job.snippet,
+                fullDescription: details.description,
+                requirements: details.requirements,
+                salaryMin: details.salaryMin,
+                salaryMax: details.salaryMax,
+                salaryCurrency: details.salaryCurrency,
+                companySlug: details.company || job.companySlug,
+                extractedLocation: details.location,
+              };
+            }
+            
+            // 2. Check relevance (only if we have target roles)
+            if (targetRoles.length > 0) {
+              const relevanceCheck = await isJobRelevantToRoles(enrichedJob.title || "", targetRoles, lovableApiKey);
+              console.log(`Relevance: "${enrichedJob.title}" - ${relevanceCheck.isRelevant ? "YES" : "NO"}`);
+              
+              if (!relevanceCheck.isRelevant) {
+                filteredByRelevance++;
+                return;
+              }
+            }
+            
+            // 3. Validate location (only for in-person/hybrid)
+            if (requiresLocationValidation) {
+              const validation = await validateJobLocation(
+                enrichedJob.extractedLocation,
+                userPreferences.location_zip!,
+                radiusMiles,
+                lovableApiKey
+              );
+              
+              console.log(`Location: "${enrichedJob.title}" at ${enrichedJob.extractedLocation} - ${validation.isValid ? "OK" : "TOO FAR"}`);
+              
+              if (!validation.isValid) {
+                filteredByLocation++;
+                return;
+              }
+            }
+            
+            // 4. Insert into database
+            const { error } = await serviceClient.from("discovered_jobs").upsert(
+              {
+                user_id: userId,
+                url: enrichedJob.url,
+                title: enrichedJob.title || "Untitled Position",
+                snippet: enrichedJob.fullDescription || enrichedJob.snippet,
+                ats_type: enrichedJob.atsType,
+                company_slug: enrichedJob.companySlug,
+                source: "serpapi_enriched",
+                discovered_at: new Date().toISOString(),
+                salary_min: enrichedJob.salaryMin,
+                salary_max: enrichedJob.salaryMax,
+                salary_currency: enrichedJob.salaryCurrency || "USD",
+              },
+              { onConflict: "user_id,url" }
+            );
+            
+            if (error) {
+              console.error(`Insert error for ${enrichedJob.url}:`, error.message);
+              skipped++;
+            } else {
+              inserted++;
+              if (enrichedJob.salaryMin || enrichedJob.salaryMax) withSalary++;
+              if (enrichedJob.fullDescription) withDescription++;
+              console.log(`Inserted: ${enrichedJob.title}`);
+            }
+          } catch (err) {
+            console.error(`Error processing ${job.url}:`, err);
+            skipped++;
+          }
+        })
       );
       
-      console.log(`Location check for ${job.title}: ${job.extractedLocation} -> ${validation.reason}`);
-      
-      if (!validation.isValid) {
-        console.log(`Skipping job outside radius: ${job.title} at ${job.extractedLocation}`);
-        filteredByLocation++;
-        continue;
+      // Brief pause between batches to avoid overwhelming APIs
+      if (i + 5 < jobsToProcess.length) {
+        await new Promise(resolve => setTimeout(resolve, 100));
       }
     }
-    
-    const { error } = await serviceClient.from("discovered_jobs").upsert(
-      {
-        user_id: userId,
-        url: job.url,
-        title: job.title || "Untitled Position",
-        snippet: job.fullDescription || job.snippet,
-        ats_type: job.atsType,
-        company_slug: job.companySlug,
-        source: "serpapi_enriched",
-        discovered_at: new Date().toISOString(),
-        salary_min: job.salaryMin,
-        salary_max: job.salaryMax,
-        salary_currency: job.salaryCurrency || "USD",
-      },
-      { onConflict: "user_id,url" }
-    );
-    
-    if (error) {
-      console.error("Insert error:", error);
-      skipped++;
-    } else {
-      inserted++;
-      if (job.salaryMin || job.salaryMax) withSalary++;
-      if (job.fullDescription) withDescription++;
-    }
+  } catch (error) {
+    console.error("Background task error:", error);
   }
   
-  console.log(`Background processing complete: ${inserted} inserted, ${skipped} skipped, ${filteredByLocation} filtered by location, ${filteredByRelevance} filtered by relevance`);
+  console.log(`Background complete: ${inserted} inserted, ${skipped} skipped, ${filteredByLocation} filtered by location, ${filteredByRelevance} filtered by relevance`);
   return { inserted, skipped, withSalary, withDescription, filteredByLocation, filteredByRelevance };
 }
 
