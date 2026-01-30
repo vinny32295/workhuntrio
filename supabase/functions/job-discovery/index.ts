@@ -1753,8 +1753,9 @@ async function processAndSaveJobs(
               console.log(`Target URL job (bypassing relevance): "${enrichedJob.title}"`);
             }
             
-            // 3. Validate location (only for in-person/hybrid)
-            if (requiresLocationValidation) {
+            // 3. Validate location (only for in-person/hybrid AND not from target URL)
+            // Jobs from user's target URLs bypass location filtering since user explicitly chose that company
+            if (requiresLocationValidation && !job.isFromTargetUrl) {
               const validation = await validateJobLocation(
                 enrichedJob.extractedLocation,
                 userPreferences.location_zip!,
@@ -1768,6 +1769,8 @@ async function processAndSaveJobs(
                 filteredByLocation++;
                 return;
               }
+            } else if (job.isFromTargetUrl && requiresLocationValidation) {
+              console.log(`Target URL job (bypassing location filter): "${enrichedJob.title}" at ${enrichedJob.extractedLocation}`);
             }
             
             // 4. Insert into database
