@@ -800,49 +800,114 @@ Return 5-10 company names. Example: ["AllianceBernstein", "Nissan", "HCA Healthc
   }
 }
 
-// Search Workday career pages using SerpAPI (since Workday is heavily JS-rendered)
+// Search Workday career pages using Firecrawl (Workday is heavily JS-rendered)
 async function searchWorkdayCareerPage(
   companyName: string,
   careersUrl: string,
   targetRoles: string[],
-  serpApiKey: string
+  serpApiKey: string,
+  lovableApiKey?: string
 ): Promise<ClassifiedJob[]> {
   console.log(`Searching Workday page for ${companyName}: ${careersUrl}`);
   
   const jobs: ClassifiedJob[] = [];
+  const firecrawlApiKey = Deno.env.get("FIRECRAWL_API_KEY");
+  const apiKey = lovableApiKey || Deno.env.get("LOVABLE_API_KEY") || "";
   
-  // Extract the Workday domain for site-specific search
+  // Extract the Workday domain
   let workdayDomain: string;
+  let baseUrl: string;
   try {
     const url = new URL(careersUrl);
     workdayDomain = url.hostname;
+    // Get the base path (e.g., /alliancebernsteincareers)
+    baseUrl = `${url.origin}${url.pathname.split('?')[0]}`;
   } catch {
     console.error(`Invalid Workday URL: ${careersUrl}`);
     return [];
   }
   
-  // Search for each role on the Workday site
-  for (const role of targetRoles.slice(0, 2)) { // Limit to 2 roles per company
+  // Try Firecrawl first - scrape the Workday page with search query
+  if (firecrawlApiKey && apiKey) {
+    for (const role of targetRoles.slice(0, 2)) {
+      try {
+        // Build URL with search query
+        const searchUrl = `${baseUrl}?q=${encodeURIComponent(role)}`;
+        console.log(`Firecrawl scraping Workday: ${searchUrl}`);
+        
+        const response = await fetch("https://api.firecrawl.dev/v1/scrape", {
+          method: "POST",
+          headers: {
+            "Authorization": `Bearer ${firecrawlApiKey}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            url: searchUrl,
+            formats: ["html", "links"],
+            onlyMainContent: false,
+            waitFor: 3000, // Workday needs time to render
+          }),
+        });
+        
+        if (response.ok) {
+          const data = await response.json();
+          if (data.success && data.data?.html) {
+            console.log(`Firecrawl got Workday HTML for ${companyName} (${role})`);
+            
+            // Extract job listings using AI
+            const extractedJobs = await extractWorkdayJobsFromHtml(
+              data.data.html,
+              baseUrl,
+              companyName,
+              role,
+              apiKey
+            );
+            
+            for (const job of extractedJobs) {
+              // Avoid duplicates
+              if (!jobs.some(j => j.url === job.url)) {
+                jobs.push(job);
+              }
+            }
+            
+            console.log(`Extracted ${extractedJobs.length} jobs from Workday for ${role}`);
+          }
+        } else {
+          console.error(`Firecrawl error for Workday: ${response.status}`);
+        }
+        
+        await new Promise(resolve => setTimeout(resolve, 500));
+      } catch (err) {
+        console.error(`Firecrawl Workday error for ${companyName}/${role}:`, err);
+      }
+    }
+    
+    // If we got jobs from Firecrawl, return them
+    if (jobs.length > 0) {
+      console.log(`Found ${jobs.length} Workday jobs at ${companyName} via Firecrawl`);
+      return jobs;
+    }
+  }
+  
+  // Fallback: Use SerpAPI to search within the Workday site
+  console.log(`Falling back to SerpAPI for Workday: ${companyName}`);
+  for (const role of targetRoles.slice(0, 2)) {
     try {
       const query = `site:${workdayDomain} "${role}"`;
-      console.log(`Workday search: ${query}`);
+      console.log(`Workday SerpAPI search: ${query}`);
       
-      const results = await serpApiSearch(query, serpApiKey, 5);
+      const results = await serpApiSearch(query, serpApiKey, 10);
       
       for (const result of results) {
-        // Accept any URL from the Workday domain (they use various URL patterns)
-        // Workday URLs can be: /job/JobID, /en-US/job/JobID, /details/JobID, etc.
         const isWorkdayJobUrl = result.url.includes(workdayDomain) && 
           (result.url.includes("/job/") || 
            result.url.includes("/jobs/") ||
            result.url.includes("/details/") ||
            result.url.includes("/requisition/") ||
-           // Match any URL with a job-like ID pattern at the end
            /\/[a-f0-9-]{20,}|\/\d{5,}/.test(result.url));
         
-        if (!isWorkdayJobUrl) {
-          continue;
-        }
+        if (!isWorkdayJobUrl) continue;
+        if (jobs.some(j => j.url === result.url)) continue;
         
         jobs.push({
           url: result.url,
@@ -861,12 +926,112 @@ async function searchWorkdayCareerPage(
       
       await new Promise(resolve => setTimeout(resolve, 300));
     } catch (err) {
-      console.error(`Workday search error for ${companyName}/${role}:`, err);
+      console.error(`Workday SerpAPI error for ${companyName}/${role}:`, err);
     }
   }
   
   console.log(`Found ${jobs.length} Workday jobs at ${companyName}`);
   return jobs;
+}
+
+// Extract job listings from Workday HTML using AI
+async function extractWorkdayJobsFromHtml(
+  html: string,
+  baseUrl: string,
+  companyName: string,
+  targetRole: string,
+  apiKey: string
+): Promise<ClassifiedJob[]> {
+  const truncatedHtml = html.substring(0, 80000); // Workday pages can be large
+  
+  const prompt = `This is HTML from a Workday career page for ${companyName}.
+Base URL: ${baseUrl}
+Target role: ${targetRole}
+
+Extract ALL job listings visible on this page. Look for:
+1. Job title elements (usually in links or headings)
+2. Job URLs - they typically contain "/job/" followed by the job title and ID
+3. The job list section (usually contains multiple job cards/rows)
+
+For Workday URLs, the pattern is usually:
+${baseUrl}/job/Job-Title/JOB_REQ_ID
+
+Return a JSON array with ALL jobs found (up to 30):
+[{"url": "full_job_url", "title": "Job Title", "snippet": "location or brief info"}]
+
+IMPORTANT:
+- Extract ALL jobs, not just ones matching "${targetRole}" - we'll filter later
+- Make sure URLs are absolute (start with https://)
+- If a URL is relative like "/job/...", prepend the base URL
+- Include the job location in the snippet if visible
+
+HTML (truncated):
+${truncatedHtml}`;
+
+  try {
+    const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: "google/gemini-2.5-flash",
+        messages: [
+          { role: "system", content: "You extract job listings from Workday career pages. Return valid JSON arrays only." },
+          { role: "user", content: prompt },
+        ],
+        temperature: 0.1,
+      }),
+    });
+
+    if (!response.ok) {
+      console.error("AI API error for Workday extraction:", response.status);
+      return [];
+    }
+
+    const data = await response.json();
+    const content = data.choices?.[0]?.message?.content || "";
+    const jsonMatch = content.match(/\[[\s\S]*?\]/);
+    
+    if (!jsonMatch) {
+      console.log("No jobs extracted from Workday HTML");
+      return [];
+    }
+
+    const rawJobs = JSON.parse(jsonMatch[0]) as Array<{ url: string; title: string; snippet?: string }>;
+    
+    // Convert to ClassifiedJob format and ensure absolute URLs
+    return rawJobs
+      .filter(j => j.url && j.title)
+      .map(j => {
+        let url = j.url;
+        // Fix relative URLs
+        if (url.startsWith("/")) {
+          const origin = new URL(baseUrl).origin;
+          url = origin + url;
+        } else if (!url.startsWith("http")) {
+          url = baseUrl + "/" + url;
+        }
+        
+        return {
+          url,
+          title: j.title,
+          snippet: j.snippet || "",
+          atsType: "workday",
+          companySlug: companyName.toLowerCase().replace(/\s+/g, "-"),
+          salaryMin: null,
+          salaryMax: null,
+          salaryCurrency: null,
+          fullDescription: null,
+          requirements: null,
+          isDirectPosting: true,
+        };
+      });
+  } catch (error) {
+    console.error("Workday extraction error:", error);
+    return [];
+  }
 }
 
 // Search a company's career page for jobs matching a role
@@ -879,9 +1044,9 @@ async function searchCompanyCareerPage(
 ): Promise<ClassifiedJob[]> {
   console.log(`Searching ${companyName} careers at ${careersUrl} for roles: ${targetRoles.join(", ")}`);
   
-  // Special handling for Workday URLs - use SerpAPI to search within the site
+  // Special handling for Workday URLs - use Firecrawl to scrape dynamic content
   if (careersUrl.includes("myworkdayjobs.com")) {
-    return await searchWorkdayCareerPage(companyName, careersUrl, targetRoles, serpApiKey);
+    return await searchWorkdayCareerPage(companyName, careersUrl, targetRoles, serpApiKey, lovableApiKey);
   }
   
   // First, try to get the careers page with Firecrawl (handles JS-rendered pages)
