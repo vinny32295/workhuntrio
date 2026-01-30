@@ -1282,7 +1282,8 @@ async function processAndSaveJobs(
   userPreferences: { work_type: string[] | null; location_zip: string | null; search_radius_miles: number | null }
 ): Promise<{ inserted: number; skipped: number; withSalary: number; withDescription: number; filteredByLocation: number }> {
   const enrichedJobs: (ClassifiedJob & { extractedLocation: string | null })[] = [];
-  const jobsToProcess = directPostings.slice(0, Math.min(maxResults, 10)); // Reduced to 10 for speed
+  // Process up to maxResults (based on user tier: free=5, pro=25, premium=50)
+  const jobsToProcess = directPostings.slice(0, maxResults);
   
   const workTypes = userPreferences.work_type || [];
   const hasInPersonOrHybrid = workTypes.includes("in-person") || workTypes.includes("hybrid");
@@ -1757,8 +1758,8 @@ Deno.serve(async (req) => {
         extractedJobLinks: extractedJobUrls.length,
         localCompaniesSearched: localCompaniesSearchedCount,
         localCompanyJobs: localCompanyJobs.length,
-        enrichedJobs: Math.min(finalPostings.length, maxResults, 10),
-        inserted: Math.min(finalPostings.length, maxResults, 10),
+        enrichedJobs: Math.min(finalPostings.length, maxResults),
+        inserted: Math.min(finalPostings.length, maxResults),
         skipped: 0,
         withSalary: 0,
         withDescription: 0,
