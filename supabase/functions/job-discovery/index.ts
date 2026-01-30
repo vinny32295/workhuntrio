@@ -553,6 +553,37 @@ function getCitiesFromZip(zip: string | null): string[] {
   return ZIP_TO_CITIES[prefix] || [];
 }
 
+// Known company Workday URLs (since Workday URLs are hard to discover)
+const KNOWN_WORKDAY_COMPANIES: Record<string, string> = {
+  "alliancebernstein": "https://abglobal.wd1.myworkdayjobs.com/alliancebernsteincareers",
+  "alliance bernstein": "https://abglobal.wd1.myworkdayjobs.com/alliancebernsteincareers",
+  "ab global": "https://abglobal.wd1.myworkdayjobs.com/alliancebernsteincareers",
+  "hca healthcare": "https://hcahealthcare.wd1.myworkdayjobs.com/HCAHealthcare",
+  "hca": "https://hcahealthcare.wd1.myworkdayjobs.com/HCAHealthcare",
+  "nissan": "https://nissan.wd1.myworkdayjobs.com/Nissan_Careers",
+  "bridgestone": "https://bridgestone.wd1.myworkdayjobs.com/External",
+  "amazon": "https://amazon.jobs",
+  "google": "https://careers.google.com",
+  "microsoft": "https://careers.microsoft.com",
+  "walmart": "https://careers.walmart.com",
+  "target": "https://jobs.target.com",
+  "ups": "https://www.jobs-ups.com",
+  "fedex": "https://careers.fedex.com",
+  "delta": "https://delta.wd5.myworkdayjobs.com/delta",
+  "asurion": "https://asurion.wd1.myworkdayjobs.com/Asurion",
+  "dollar general": "https://dollargeneral.wd1.myworkdayjobs.com/DollarGeneral",
+  "lowes": "https://talent.lowes.com",
+  "home depot": "https://careers.homedepot.com",
+  "kroger": "https://jobs.kroger.com",
+  "publix": "https://careers.publix.com",
+  "caterpillar": "https://caterpillar.wd5.myworkdayjobs.com/CaterpillarCareers",
+  "deloitte": "https://apply.deloitte.com",
+  "kpmg": "https://kpmgus.wd5.myworkdayjobs.com/KPMG",
+  "ernst young": "https://careers.ey.com",
+  "ey": "https://careers.ey.com",
+  "pwc": "https://pwc.wd1.myworkdayjobs.com/Global_Experienced_Careers",
+};
+
 // Discover major local companies based on location using AI + web search
 async function discoverLocalCompanies(
   city: string,
@@ -603,7 +634,7 @@ Exclude:
 - Generic terms like "top companies"
 - Government entities (unless they're known employers)
 
-Return 5-10 company names. Example: ["Alliance Bernstein", "Nissan", "HCA Healthcare"]`;
+Return 5-10 company names. Example: ["AllianceBernstein", "Nissan", "HCA Healthcare"]`;
 
   try {
     const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
@@ -642,34 +673,77 @@ Return 5-10 company names. Example: ["Alliance Bernstein", "Nissan", "HCA Health
     // Now find career pages for each company
     const companiesWithCareers: { name: string; careersUrl: string | null }[] = [];
     
-    for (const company of companies.slice(0, 6)) { // Limit to 6 companies
-      try {
-        const careerResults = await serpApiSearch(`"${company}" careers jobs site`, serpApiKey, 3);
-        
-        // Look for career page URLs in results
-        let careersUrl: string | null = null;
-        for (const result of careerResults) {
-          const urlLower = result.url.toLowerCase();
-          // Check if it looks like a career page
-          if (
-            urlLower.includes("/careers") ||
-            urlLower.includes("/jobs") ||
-            urlLower.includes("greenhouse") ||
-            urlLower.includes("lever") ||
-            urlLower.includes("workday")
-          ) {
-            careersUrl = result.url;
-            break;
-          }
+    for (const company of companies.slice(0, 8)) { // Increased to 8 companies
+      // First check if we have a known URL for this company
+      const companyLower = company.toLowerCase();
+      let careersUrl: string | null = null;
+      
+      // Check known Workday URLs
+      for (const [knownName, knownUrl] of Object.entries(KNOWN_WORKDAY_COMPANIES)) {
+        if (companyLower.includes(knownName) || knownName.includes(companyLower)) {
+          careersUrl = knownUrl;
+          console.log(`Found known careers URL for ${company}: ${careersUrl}`);
+          break;
         }
-        
+      }
+      
+      // If not found in known list, search for it
+      if (!careersUrl) {
+        try {
+          // Specifically search for Workday and other ATS platforms
+          const careerResults = await serpApiSearch(
+            `"${company}" careers site:myworkdayjobs.com OR site:greenhouse.io OR site:lever.co OR "${company}" careers apply jobs`,
+            serpApiKey,
+            5
+          );
+          
+          // Prioritize actual ATS/careers URLs, not aggregators
+          for (const result of careerResults) {
+            const urlLower = result.url.toLowerCase();
+            
+            // Skip aggregators - these are NOT direct career pages
+            if (
+              urlLower.includes("glassdoor") ||
+              urlLower.includes("indeed") ||
+              urlLower.includes("linkedin") ||
+              urlLower.includes("ziprecruiter") ||
+              urlLower.includes("monster")
+            ) {
+              continue;
+            }
+            
+            // Prioritize Workday URLs
+            if (urlLower.includes("myworkdayjobs.com")) {
+              careersUrl = result.url;
+              break;
+            }
+            
+            // Check for other ATS or careers pages
+            if (
+              urlLower.includes("/careers") ||
+              urlLower.includes("/jobs") ||
+              urlLower.includes("greenhouse") ||
+              urlLower.includes("lever") ||
+              urlLower.includes("icims") ||
+              urlLower.includes("applicantpro")
+            ) {
+              careersUrl = result.url;
+              break;
+            }
+          }
+          
+          await new Promise(resolve => setTimeout(resolve, 300));
+        } catch (err) {
+          console.error(`Career search failed for ${company}: ${err}`);
+        }
+      }
+      
+      // Only add if we found a valid (non-aggregator) careers URL
+      if (careersUrl) {
         companiesWithCareers.push({ name: company, careersUrl });
-        console.log(`${company}: ${careersUrl || "no careers page found"}`);
-        
-        await new Promise(resolve => setTimeout(resolve, 300));
-      } catch (err) {
-        console.error(`Career search failed for ${company}: ${err}`);
-        companiesWithCareers.push({ name: company, careersUrl: null });
+        console.log(`${company}: ${careersUrl}`);
+      } else {
+        console.log(`${company}: no direct careers page found (skipping)`);
       }
     }
     
@@ -680,14 +754,80 @@ Return 5-10 company names. Example: ["Alliance Bernstein", "Nissan", "HCA Health
   }
 }
 
+// Search Workday career pages using SerpAPI (since Workday is heavily JS-rendered)
+async function searchWorkdayCareerPage(
+  companyName: string,
+  careersUrl: string,
+  targetRoles: string[],
+  serpApiKey: string
+): Promise<ClassifiedJob[]> {
+  console.log(`Searching Workday page for ${companyName}: ${careersUrl}`);
+  
+  const jobs: ClassifiedJob[] = [];
+  
+  // Extract the Workday domain for site-specific search
+  let workdayDomain: string;
+  try {
+    const url = new URL(careersUrl);
+    workdayDomain = url.hostname;
+  } catch {
+    console.error(`Invalid Workday URL: ${careersUrl}`);
+    return [];
+  }
+  
+  // Search for each role on the Workday site
+  for (const role of targetRoles.slice(0, 2)) { // Limit to 2 roles per company
+    try {
+      const query = `site:${workdayDomain} "${role}"`;
+      console.log(`Workday search: ${query}`);
+      
+      const results = await serpApiSearch(query, serpApiKey, 5);
+      
+      for (const result of results) {
+        // Skip non-job pages
+        if (!result.url.includes("/job/") && !result.url.includes("/en-US/job/")) {
+          continue;
+        }
+        
+        jobs.push({
+          url: result.url,
+          title: result.title.replace(/ \| .*$/, "").replace(/ - .*Careers.*$/i, ""),
+          snippet: result.snippet || "",
+          atsType: "workday",
+          companySlug: companyName.toLowerCase().replace(/\s+/g, "-"),
+          salaryMin: null,
+          salaryMax: null,
+          salaryCurrency: null,
+          fullDescription: null,
+          requirements: null,
+          isDirectPosting: true,
+        });
+      }
+      
+      await new Promise(resolve => setTimeout(resolve, 300));
+    } catch (err) {
+      console.error(`Workday search error for ${companyName}/${role}:`, err);
+    }
+  }
+  
+  console.log(`Found ${jobs.length} Workday jobs at ${companyName}`);
+  return jobs;
+}
+
 // Search a company's career page for jobs matching a role
 async function searchCompanyCareerPage(
   companyName: string,
   careersUrl: string,
   targetRoles: string[],
-  lovableApiKey: string
+  lovableApiKey: string,
+  serpApiKey: string
 ): Promise<ClassifiedJob[]> {
   console.log(`Searching ${companyName} careers at ${careersUrl} for roles: ${targetRoles.join(", ")}`);
+  
+  // Special handling for Workday URLs - use SerpAPI to search within the site
+  if (careersUrl.includes("myworkdayjobs.com")) {
+    return await searchWorkdayCareerPage(companyName, careersUrl, targetRoles, serpApiKey);
+  }
   
   // First, try to get the careers page with Firecrawl (handles JS-rendered pages)
   const firecrawlApiKey = Deno.env.get("FIRECRAWL_API_KEY");
@@ -1385,7 +1525,8 @@ Deno.serve(async (req) => {
             company.name,
             company.careersUrl,
             targetRoles,
-            lovableApiKey
+            lovableApiKey,
+            serpApiKey
           );
           
           // Add jobs that aren't already in our list
