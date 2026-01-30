@@ -2,21 +2,21 @@
 export const TIER_LIMITS = {
   free: {
     searchesPerWeek: 1,
-    resultsPerSearch: 5,
+    resultsPerSearch: 10,
     tailorsPerMonth: 0,
     resumeParses: 1,
     aiScoring: false,
   },
   pro: {
     searchesPerWeek: 3,
-    resultsPerSearch: 25,
+    resultsPerSearch: 50,
     tailorsPerMonth: 10,
     resumeParses: Infinity,
     aiScoring: true,
   },
   premium: {
     searchesPerWeek: Infinity,
-    resultsPerSearch: 50,
+    resultsPerSearch: 100,
     tailorsPerMonth: Infinity,
     resumeParses: Infinity,
     aiScoring: true,
