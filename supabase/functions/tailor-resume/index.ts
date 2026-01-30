@@ -143,6 +143,7 @@ CRITICAL FORMATTING REQUIREMENTS:
 3. Use the candidate's actual name, email, and phone number provided
 4. Incorporate keywords and requirements from the job description
 5. Highlight relevant experience and skills that match the job
+6. REWRITE work experience bullet points to better match the job requirements
 
 OUTPUT FORMAT - You MUST follow this exact structure:
 
@@ -166,12 +167,17 @@ OUTPUT FORMAT - You MUST follow this exact structure:
 
 ## PROFESSIONAL EXPERIENCE
 
-**[Job Title]** | [Company Name] | [Dates]
-- [Achievement/responsibility using action verbs and metrics]
-- [Achievement/responsibility]
-- [Achievement/responsibility]
+### [Job Title] | [Company Name] | [Start Date] - [End Date]
+- [REWRITTEN achievement/responsibility using action verbs and metrics, tailored to match job requirements]
+- [REWRITTEN achievement/responsibility that highlights relevant skills]
+- [REWRITTEN achievement/responsibility with quantifiable results]
 
-[Repeat for other relevant positions]
+### [Job Title] | [Company Name] | [Start Date] - [End Date]
+- [REWRITTEN bullet point tailored to the target job]
+- [REWRITTEN bullet point highlighting transferable skills]
+- [REWRITTEN bullet point with metrics if possible]
+
+[Continue for all work experience entries from the candidate's resume]
 
 ---
 
