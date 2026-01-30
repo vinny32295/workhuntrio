@@ -80,9 +80,9 @@ export default function TailorResumeDialog({
     }
   };
 
-  // Parse the generated content to extract summary, skills, and cover letter
+  // Parse the generated content to extract summary, skills, work history, and cover letter
   const parseContent = () => {
-    if (!content) return { summary: undefined, skills: undefined, coverLetter: undefined };
+    if (!content) return { summary: undefined, skills: undefined, workHistory: undefined, coverLetter: undefined };
     
     // Extract professional summary
     const summaryMatch = content.match(/##\s*(?:PROFESSIONAL\s*)?SUMMARY\s*\n+([\s\S]*?)(?=\n##|\n---|\n#|$)/i);
@@ -102,6 +102,77 @@ export default function TailorResumeDialog({
         .filter(s => s.length > 0 && s.length < 50);
     }
     
+    // Extract work history section
+    interface TailoredWorkExperience {
+      company: string;
+      title: string;
+      startDate: string;
+      endDate: string;
+      bullets: string[];
+    }
+    
+    let workHistory: TailoredWorkExperience[] | undefined;
+    const workMatch = content.match(/##\s*(?:PROFESSIONAL\s*)?EXPERIENCE\s*\n+([\s\S]*?)(?=\n##\s*(?!#)|---\s*\n|# COVER LETTER|$)/i);
+    if (workMatch) {
+      const workSection = workMatch[1];
+      // Split by job entries (### or **Title**)
+      const jobRegex = /###\s*(.+?)\s*\|\s*(.+?)\s*\|\s*(.+?)\s*-\s*(.+?)(?:\n|$)([\s\S]*?)(?=\n###|\n\*\*[^*]+\*\*\s*\||$)/gi;
+      const altJobRegex = /\*\*(.+?)\*\*\s*\|\s*(.+?)\s*\|\s*(.+?)\n([\s\S]*?)(?=\n\*\*[^*]+\*\*\s*\||---|\n##|$)/gi;
+      
+      workHistory = [];
+      let match;
+      
+      // Try the ### format first
+      while ((match = jobRegex.exec(workSection)) !== null) {
+        const title = match[1].replace(/\*\*/g, '').trim();
+        const company = match[2].replace(/\*\*/g, '').trim();
+        const startDate = match[3].trim();
+        const endDate = match[4].trim();
+        const bulletSection = match[5] || '';
+        
+        const bullets = bulletSection
+          .split('\n')
+          .filter(line => line.trim().startsWith('-') || line.trim().startsWith('•'))
+          .map(line => line.replace(/^[\s\-•]+/, '').replace(/\*\*/g, '').trim())
+          .filter(b => b.length > 0);
+        
+        if (title && company && bullets.length > 0) {
+          workHistory.push({ title, company, startDate, endDate, bullets });
+        }
+      }
+      
+      // If no matches, try the **Title** | Company format
+      if (workHistory.length === 0) {
+        while ((match = altJobRegex.exec(workSection)) !== null) {
+          const titleCompany = match[1].replace(/\*\*/g, '').trim();
+          // Parse "Job Title | Company | Dates" format
+          const parts = titleCompany.split('|').map(p => p.trim());
+          const title = parts[0] || '';
+          const company = match[2]?.replace(/\*\*/g, '').trim() || parts[1] || '';
+          const datesPart = match[3] || '';
+          const dateMatch = datesPart.match(/(.+?)\s*-\s*(.+)/);
+          const startDate = dateMatch ? dateMatch[1].trim() : '';
+          const endDate = dateMatch ? dateMatch[2].trim() : 'Present';
+          const bulletSection = match[4] || '';
+          
+          const bullets = bulletSection
+            .split('\n')
+            .filter(line => line.trim().startsWith('-') || line.trim().startsWith('•'))
+            .map(line => line.replace(/^[\s\-•]+/, '').replace(/\*\*/g, '').trim())
+            .filter(b => b.length > 0);
+          
+          if (title && bullets.length > 0) {
+            workHistory.push({ title, company, startDate, endDate, bullets });
+          }
+        }
+      }
+      
+      // If still no matches, just return undefined to use profile data
+      if (workHistory.length === 0) {
+        workHistory = undefined;
+      }
+    }
+    
     // Extract cover letter section
     const coverLetterMatch = content.match(/# COVER LETTER\s*\n+([\s\S]*?)(?=\n---\s*$|$)/i);
     const coverLetter = coverLetterMatch 
@@ -112,7 +183,7 @@ export default function TailorResumeDialog({
         .trim()
       : undefined;
     
-    return { summary, skills, coverLetter };
+    return { summary, skills, workHistory, coverLetter };
   };
 
   const downloadResume = async () => {
@@ -121,12 +192,13 @@ export default function TailorResumeDialog({
     setDownloadingResume(true);
 
     try {
-      const { summary, skills } = parseContent();
+      const { summary, skills, workHistory } = parseContent();
 
       const { data, error } = await supabase.functions.invoke("generate-resume-pdf", {
         body: { 
           tailoredSummary: summary,
           tailoredSkills: skills,
+          tailoredWorkHistory: workHistory,
           companyName: job?.company_slug || 'Company',
           jobTitle: job?.title || 'Position',
           type: "resume"

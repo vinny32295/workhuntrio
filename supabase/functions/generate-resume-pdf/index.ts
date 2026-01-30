@@ -24,6 +24,14 @@ interface Education {
   endDate: string;
 }
 
+interface TailoredWorkExperience {
+  company: string;
+  title: string;
+  startDate: string;
+  endDate: string;
+  bullets: string[];
+}
+
 interface ProfileData {
   full_name: string | null;
   email: string | null;
@@ -221,7 +229,7 @@ const baseStyles = `
     }
 `;
 
-function generateResumeHTML(profile: ProfileData, tailoredSummary?: string, tailoredSkills?: string[]): string {
+function generateResumeHTML(profile: ProfileData, tailoredSummary?: string, tailoredSkills?: string[], tailoredWorkHistory?: TailoredWorkExperience[]): string {
   const name = profile.full_name || 'Your Name';
   const email = profile.email || '';
   const phone = profile.phone_number || '';
@@ -234,7 +242,24 @@ function generateResumeHTML(profile: ProfileData, tailoredSummary?: string, tail
   const displaySkills = tailoredSkills && tailoredSkills.length > 0 ? tailoredSkills : profile.skills;
   
   let workExperienceHTML = '';
-  if (profile.work_history && profile.work_history.length > 0) {
+  
+  // Use tailored work history if provided, otherwise use original profile work history
+  if (tailoredWorkHistory && tailoredWorkHistory.length > 0) {
+    workExperienceHTML = tailoredWorkHistory.map(job => `
+      <div class="job">
+        <div class="job-header">
+          <div class="job-title-company">
+            <span class="job-title">${escapeHtml(job.title)}</span>
+            <span class="company"> | ${escapeHtml(job.company)}</span>
+          </div>
+          <div class="job-dates">${escapeHtml(job.startDate)} – ${escapeHtml(job.endDate)}</div>
+        </div>
+        <ul class="job-bullets">
+          ${job.bullets.map(bullet => `<li>${escapeHtml(bullet)}</li>`).join('\n')}
+        </ul>
+      </div>
+    `).join('\n');
+  } else if (profile.work_history && profile.work_history.length > 0) {
     workExperienceHTML = profile.work_history.map(job => `
       <div class="job">
         <div class="job-header">
@@ -464,6 +489,7 @@ serve(async (req) => {
     const { 
       tailoredSummary, 
       tailoredSkills,
+      tailoredWorkHistory,
       coverLetterContent, 
       jobTitle, 
       companyName,
@@ -500,6 +526,7 @@ serve(async (req) => {
 
     console.log("Generating", type, "HTML for user:", user.id);
     console.log("Work history entries:", profile.work_history?.length || 0);
+    console.log("Tailored work history entries:", tailoredWorkHistory?.length || 0);
     console.log("Education entries:", profile.education?.length || 0);
     console.log("Skills:", profile.skills?.length || 0);
 
@@ -515,7 +542,7 @@ serve(async (req) => {
     } = { success: true };
 
     if (type === "resume" || type === "both") {
-      result.resumeHtml = generateResumeHTML(profile as ProfileData, tailoredSummary, tailoredSkills);
+      result.resumeHtml = generateResumeHTML(profile as ProfileData, tailoredSummary, tailoredSkills, tailoredWorkHistory);
       result.resumeFileName = `${safeName}_Resume_${safeCompany}.html`;
     }
 
