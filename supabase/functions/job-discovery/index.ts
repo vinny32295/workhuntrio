@@ -622,8 +622,15 @@ function buildSearchQueries(preferences: {
   return queries;
 }
 
+// Fetch result type to distinguish between 404 and other errors
+interface FetchResult {
+  html: string | null;
+  is404: boolean;
+  status: number | null;
+}
+
 // Fetch page content with timeout
-async function fetchPageContent(url: string, timeoutMs: number = 5000): Promise<string | null> {
+async function fetchPageContent(url: string, timeoutMs: number = 5000): Promise<FetchResult> {
   try {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
@@ -640,14 +647,16 @@ async function fetchPageContent(url: string, timeoutMs: number = 5000): Promise<
     
     if (!response.ok) {
       console.log(`Failed to fetch ${url}: ${response.status}`);
-      return null;
+      // Track 404s specifically so we can filter them out
+      const is404 = response.status === 404 || response.status === 410; // 410 = Gone
+      return { html: null, is404, status: response.status };
     }
     
     const html = await response.text();
-    return html;
+    return { html, is404: false, status: response.status };
   } catch (error) {
     console.log(`Error fetching ${url}:`, error);
-    return null;
+    return { html: null, is404: false, status: null };
   }
 }
 
@@ -821,10 +830,16 @@ async function processAndSaveJobs(
       batch.map(async (job) => {
         try {
           console.log(`Fetching job details: ${job.url}`);
-          const html = await fetchPageContent(job.url, 4000); // Shorter timeout
+          const fetchResult = await fetchPageContent(job.url, 4000); // Shorter timeout
           
-          if (html) {
-            const details = await extractJobDetails(html, job.url, lovableApiKey);
+          // Skip 404 pages entirely - they shouldn't appear in discovered jobs
+          if (fetchResult.is404) {
+            console.log(`Skipping 404 page: ${job.url}`);
+            return null; // Return null to filter out later
+          }
+          
+          if (fetchResult.html) {
+            const details = await extractJobDetails(fetchResult.html, job.url, lovableApiKey);
             return {
               ...job,
               title: details.title || job.title || "Untitled Position",
@@ -845,7 +860,8 @@ async function processAndSaveJobs(
         }
       })
     );
-    enrichedJobs.push(...results);
+    // Filter out null results (404 pages)
+    enrichedJobs.push(...results.filter((r): r is NonNullable<typeof r> => r !== null));
   }
   
   // Insert into database with location validation
@@ -1075,10 +1091,10 @@ Deno.serve(async (req) => {
     const boardResults = await Promise.all(
       boardPagesToProcess.map(async (boardPage: ClassifiedJob) => {
         console.log(`Fetching board page: ${boardPage.url}`);
-        const html = await fetchPageContent(boardPage.url, 4000);
+        const fetchResult = await fetchPageContent(boardPage.url, 4000);
         
-        if (html) {
-          const jobLinks = await extractJobLinksFromPage(html, boardPage.url, lovableApiKey);
+        if (fetchResult.html && !fetchResult.is404) {
+          const jobLinks = await extractJobLinksFromPage(fetchResult.html, boardPage.url, lovableApiKey);
           console.log(`Extracted ${jobLinks.length} job links from ${boardPage.url}`);
           return jobLinks;
         }
@@ -1100,11 +1116,12 @@ Deno.serve(async (req) => {
           console.log(`Extracting direct links from aggregator: ${aggUrl}`);
           
           // Try Firecrawl first (handles anti-bot), fall back to direct fetch
-          let html = await scrapeAggregatorWithFirecrawl(aggUrl);
+          let html: string | null = await scrapeAggregatorWithFirecrawl(aggUrl);
           
           if (!html) {
             console.log(`Firecrawl failed for ${aggUrl}, trying direct fetch...`);
-            html = await fetchPageContent(aggUrl, 5000);
+            const fetchResult = await fetchPageContent(aggUrl, 5000);
+            html = fetchResult.is404 ? null : fetchResult.html;
           }
           
           if (html) {
