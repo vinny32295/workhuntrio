@@ -187,7 +187,7 @@ function filterResults(results: SearchResult[]): {
 }
 
 // Scrape aggregator page using Firecrawl (handles anti-bot protection)
-async function scrapeAggregatorWithFirecrawl(url: string): Promise<string | null> {
+async function scrapeAggregatorWithFirecrawl(url: string, scrollForMore = false): Promise<string | null> {
   const firecrawlApiKey = Deno.env.get("FIRECRAWL_API_KEY");
   
   if (!firecrawlApiKey) {
@@ -196,7 +196,30 @@ async function scrapeAggregatorWithFirecrawl(url: string): Promise<string | null
   }
   
   try {
-    console.log(`Scraping aggregator with Firecrawl: ${url}`);
+    console.log(`Scraping aggregator with Firecrawl: ${url}${scrollForMore ? " (with scroll actions)" : ""}`);
+    
+    // Build request body
+    const requestBody: Record<string, unknown> = {
+      url,
+      formats: ["html", "links"],
+      onlyMainContent: false,
+      waitFor: scrollForMore ? 3000 : 2000, // Wait longer when scrolling
+    };
+    
+    // For SPAs like Amazon.jobs, use actions to scroll and load more content
+    if (scrollForMore) {
+      requestBody.actions = [
+        { type: "wait", milliseconds: 2000 },
+        { type: "scroll", direction: "down", amount: 2000 },
+        { type: "wait", milliseconds: 1500 },
+        { type: "scroll", direction: "down", amount: 2000 },
+        { type: "wait", milliseconds: 1500 },
+        { type: "scroll", direction: "down", amount: 2000 },
+        { type: "wait", milliseconds: 1500 },
+        { type: "scroll", direction: "down", amount: 2000 },
+        { type: "wait", milliseconds: 1500 },
+      ];
+    }
     
     const response = await fetch("https://api.firecrawl.dev/v1/scrape", {
       method: "POST",
@@ -204,12 +227,7 @@ async function scrapeAggregatorWithFirecrawl(url: string): Promise<string | null
         "Authorization": `Bearer ${firecrawlApiKey}`,
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({
-        url,
-        formats: ["html", "links"],
-        onlyMainContent: false,
-        waitFor: 2000, // Wait for dynamic content to load
-      }),
+      body: JSON.stringify(requestBody),
     });
     
     if (!response.ok) {
@@ -2095,12 +2113,13 @@ Deno.serve(async (req) => {
                 } else {
                   amazonUrl += (amazonUrl.includes("?") ? "&" : "?") + "result_limit=100";
                 }
-                console.log(`[BG] Using Firecrawl for Amazon.jobs: ${amazonUrl}`);
-                const html = await scrapeAggregatorWithFirecrawl(amazonUrl);
+                console.log(`[BG] Using Firecrawl for Amazon.jobs with scroll actions: ${amazonUrl}`);
+                // Pass scrollForMore=true to trigger infinite scroll on the SPA
+                const html = await scrapeAggregatorWithFirecrawl(amazonUrl, true);
                 if (html) {
                   // Use the dedicated Amazon.jobs extraction function
                   jobs = await extractAmazonJobsFromHtml(html, url, lovableApiKey);
-                  console.log(`[BG] Extracted ${jobs.length} jobs from Amazon.jobs`);
+                  console.log(`[BG] Extracted ${jobs.length} jobs from Amazon.jobs (with scroll)`);
                 } else {
                   console.log(`[BG] Firecrawl failed for Amazon.jobs, trying direct fetch...`);
                   const fetchResult = await fetchPageContent(url, 5000);
