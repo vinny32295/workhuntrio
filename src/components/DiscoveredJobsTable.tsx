@@ -19,7 +19,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { ExternalLink, Plus, Check, Loader2, Search, Filter, X, Sparkles, Lock, ArrowUpDown, Trash2 } from "lucide-react";
+import { ExternalLink, Plus, Check, Loader2, Search, Filter, X, Sparkles, Lock, ArrowUpDown, Trash2, RefreshCw } from "lucide-react";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -82,6 +82,7 @@ type SortOrder = "newest" | "oldest" | "match";
 export default function DiscoveredJobsTable({ userId }: DiscoveredJobsTableProps) {
   const [jobs, setJobs] = useState<DiscoveredJob[]>([]);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [addingJob, setAddingJob] = useState<string | null>(null);
   const [titleSearch, setTitleSearch] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
@@ -105,6 +106,12 @@ export default function DiscoveredJobsTable({ userId }: DiscoveredJobsTableProps
     fetchDiscoveredJobs();
     fetchUserTier();
   }, [userId, debouncedSearch, dateFilter, sortOrder]);
+
+  const handleRefresh = async () => {
+    setRefreshing(true);
+    await fetchDiscoveredJobs();
+    setRefreshing(false);
+  };
 
   const fetchUserTier = async () => {
     try {
@@ -372,6 +379,16 @@ export default function DiscoveredJobsTable({ userId }: DiscoveredJobsTableProps
       {/* Results count */}
       <div className="mb-4 flex items-center justify-between">
         <div className="flex items-center gap-2">
+          <Button 
+            variant="ghost" 
+            size="sm" 
+            onClick={handleRefresh}
+            disabled={refreshing}
+            className="gap-1"
+          >
+            <RefreshCw className={`h-4 w-4 ${refreshing ? 'animate-spin' : ''}`} />
+            Refresh
+          </Button>
           {unreviewedCount > 0 && (
             <Badge variant="secondary" className="bg-primary/20 text-primary">
               {unreviewedCount} new
