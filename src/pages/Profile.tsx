@@ -11,7 +11,7 @@ interface Profile {
   resume_url: string | null;
   full_name: string | null;
   target_roles: string[] | null;
-  work_type: string | null;
+  work_type: string[] | null;
   phone_number: string | null;
 }
 
