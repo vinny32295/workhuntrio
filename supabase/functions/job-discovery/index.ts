@@ -404,8 +404,9 @@ async function validateJobLocation(
   radiusMiles: number,
   apiKey: string
 ): Promise<{ isValid: boolean; distance: number | null; reason: string }> {
+  // If no location found, allow the job through (can't verify it's outside radius)
   if (!jobLocation) {
-    return { isValid: false, distance: null, reason: "No location found" };
+    return { isValid: true, distance: null, reason: "No location found - allowing" };
   }
   
   // Remote jobs are always valid
