@@ -9,7 +9,6 @@ import JobPreferencesForm from "@/components/JobPreferencesForm";
 import JobApplicationsTable from "@/components/JobApplicationsTable";
 import DiscoveredJobsTable from "@/components/DiscoveredJobsTable";
 import StartHuntButton from "@/components/StartHuntButton";
-import ScoreJobsButton from "@/components/ScoreJobsButton";
 import Footer from "@/components/Footer";
 import { TierKey } from "@/lib/stripe";
 import {
@@ -270,18 +269,10 @@ const Dashboard = () => {
 
           {/* Discovered Jobs Section */}
           <div className="glass-card border border-white/10 rounded-2xl p-6">
-            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6">
-              <h2 className="text-xl font-semibold flex items-center gap-2">
-                <Search className="h-5 w-5 text-primary" />
-                Discovered Jobs
-              </h2>
-              {user && (
-                <ScoreJobsButton 
-                  hasResume={!!profile?.resume_url}
-                  onComplete={handleHuntComplete}
-                />
-              )}
-            </div>
+            <h2 className="text-xl font-semibold flex items-center gap-2 mb-6">
+              <Search className="h-5 w-5 text-primary" />
+              Discovered Jobs
+            </h2>
             {user && (
               <DiscoveredJobsTable key={discoveredJobsKey} userId={user.id} />
             )}
