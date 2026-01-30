@@ -58,8 +58,12 @@ export default function StartHuntButton({ userId, hasPreferences, onComplete }: 
       if (data?.success) {
         setLastResult(data);
         const jobCount = data.enrichedJobs || data.inserted || 0;
-        toast.success(`Found ${jobCount} matching jobs with full details!`);
-        onComplete();
+        toast.success(`Found ${jobCount} matching jobs! Refreshing in a moment...`);
+        
+        // Jobs are processed in the background, so wait before refreshing
+        // First refresh after 2s, then again after 5s for complete results
+        setTimeout(() => onComplete(), 2000);
+        setTimeout(() => onComplete(), 5000);
       } else {
         throw new Error(data?.error || "Hunt failed");
       }
