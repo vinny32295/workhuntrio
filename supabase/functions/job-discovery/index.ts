@@ -93,6 +93,7 @@ interface ClassifiedJob {
   fullDescription: string | null;
   requirements: string[] | null;
   isDirectPosting: boolean;
+  isFromTargetUrl?: boolean; // Jobs from user's target URLs bypass relevance filtering
 }
 
 // Check if URL is a direct job posting (not just a board page)
@@ -1356,26 +1357,21 @@ async function extractAmazonJobsFromHtml(
   const prompt = `This is HTML from an Amazon Jobs search results page.
 Page URL: ${pageUrl}
 
-Amazon Jobs uses a React SPA. Look for:
-1. Job cards/tiles in the search results
-2. JSON data embedded in script tags (window.__INITIAL_DATA__ or similar)
-3. Links with href containing "/jobs/" or "/en/jobs/"
-4. Job IDs in data attributes or URLs (format: /jobs/12345 or similar)
-5. Any <a> tags with job titles and links
+Extract ONLY actual job listings (NOT category links). Real Amazon job URLs look like:
+- https://www.amazon.jobs/en/jobs/3170854/supply-chain-program-manager-launch-expansion...
+- Job IDs are 7 digits (e.g., 3170854, 3168457)
 
-For each job found, extract:
-- url: The full Amazon jobs URL (e.g., https://www.amazon.jobs/en/jobs/12345/job-title)
-- title: The job title
-- location: The job location if visible
+DO NOT extract category/filter links like:
+- /en/jobs/2550015/legal (these are categories, not jobs)
+- Links with job IDs under 3000000 are likely categories
 
-Return a JSON array with ALL jobs found (up to 30):
-[{"url": "https://www.amazon.jobs/en/jobs/12345/...", "title": "Job Title", "location": "Nashville, TN"}]
+Look for:
+1. Job cards with titles like "### [Job Title](url)" in markdown
+2. Links containing "/en/jobs/3XXXXXX/" (7-digit IDs starting with 3)
+3. Job listings with "Posted" dates and "Job ID:" labels
 
-IMPORTANT:
-- Extract EVERY job listing visible in the results
-- Make sure URLs are absolute and start with https://www.amazon.jobs
-- If URL is relative like /en/jobs/..., prepend https://www.amazon.jobs
-- Don't skip any jobs
+Return a JSON array with jobs found (up to 30):
+[{"url": "https://www.amazon.jobs/en/jobs/3170854/...", "title": "Job Title", "location": "Nashville, TN"}]
 
 HTML (truncated):
 ${truncatedHtml}`;
@@ -1438,6 +1434,7 @@ ${truncatedHtml}`;
           fullDescription: null,
           requirements: null,
           isDirectPosting: true,
+          isFromTargetUrl: true, // Amazon jobs from target URL bypass relevance filtering
         };
       });
   } catch (error) {
@@ -1742,8 +1739,9 @@ async function processAndSaveJobs(
               };
             }
             
-            // 2. Check relevance (only if we have target roles)
-            if (targetRoles.length > 0) {
+            // 2. Check relevance (only if we have target roles AND job is not from a target URL)
+            // Jobs from target URLs bypass relevance filtering since user explicitly chose them
+            if (targetRoles.length > 0 && !job.isFromTargetUrl) {
               const relevanceCheck = await isJobRelevantToRoles(enrichedJob.title || "", targetRoles, lovableApiKey);
               console.log(`Relevance: "${enrichedJob.title}" - ${relevanceCheck.isRelevant ? "YES" : "NO"}`);
               
@@ -1751,6 +1749,8 @@ async function processAndSaveJobs(
                 filteredByRelevance++;
                 return;
               }
+            } else if (job.isFromTargetUrl) {
+              console.log(`Target URL job (bypassing relevance): "${enrichedJob.title}"`);
             }
             
             // 3. Validate location (only for in-person/hybrid)
@@ -2061,13 +2061,15 @@ Deno.serve(async (req) => {
                         fullDescription: null,
                         requirements: null,
                         isDirectPosting: true,
+                        isFromTargetUrl: true, // Mark as from user's target URL
                       });
                     }
                   }
                 }
               }
               
-              // Add all jobs to targetUrlJobs - dedup happens in final merge
+              // Mark all jobs as from target URL (bypass relevance filtering) and add to targetUrlJobs
+              jobs.forEach(job => { job.isFromTargetUrl = true; });
               targetUrlJobs.push(...jobs);
               console.log(`[BG] Added ${jobs.length} jobs to targetUrlJobs from: ${url}`);
               
@@ -2087,7 +2089,8 @@ Deno.serve(async (req) => {
         let localCompanyJobs: ClassifiedJob[] = [];
         let localCompaniesSearchedCount = 0;
         
-        if (primaryCity && targetRoles.length > 0 && hasLocalJobs) {
+        // Only run local company discovery if NOT in urls_only mode
+        if (searchMode !== "urls_only" && primaryCity && targetRoles.length > 0 && hasLocalJobs) {
           console.log(`[BG] Discovering local companies in ${primaryCity} for roles: ${targetRoles.join(", ")}`);
           
           const localCompanies = await discoverLocalCompanies(primaryCity, serpApiKey, lovableApiKey);
