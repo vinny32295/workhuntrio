@@ -6,6 +6,15 @@ const corsHeaders = {
     "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
 
+// Tier limits configuration
+const TIER_LIMITS = {
+  free: { searchesPerWeek: 1, resultsPerSearch: 5 },
+  pro: { searchesPerWeek: 3, resultsPerSearch: 25 },
+  premium: { searchesPerWeek: Infinity, resultsPerSearch: 50 },
+} as const;
+
+type TierKey = keyof typeof TIER_LIMITS;
+
 // ATS patterns to classify discovered URLs
 const ATS_PATTERNS: Record<string, RegExp[]> = {
   greenhouse: [/boards\.greenhouse\.io\/(\w+)/, /job-boards\.greenhouse\.io\/(\w+)/],
@@ -445,12 +454,74 @@ Deno.serve(async (req) => {
       .eq("user_id", userId)
       .single();
     
+    // Use service role client for usage/subscription queries
+    const serviceClient = createClient(
+      Deno.env.get("SUPABASE_URL")!,
+      Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
+    );
+    
+    // Get user's subscription tier
+    const { data: subscription } = await serviceClient
+      .from("subscriptions")
+      .select("tier")
+      .eq("user_id", userId)
+      .single();
+    
+    const tier = (subscription?.tier || "free") as TierKey;
+    const limits = TIER_LIMITS[tier];
+    
+    // Check and update usage
+    const { data: usage } = await serviceClient
+      .from("usage_tracking")
+      .select("*")
+      .eq("user_id", userId)
+      .single();
+    
+    // Reset weekly counter if needed
+    const now = new Date();
+    let currentSearches = usage?.searches_this_week || 0;
+    
+    if (usage && new Date(usage.week_reset_at) <= now) {
+      // Reset the counter
+      currentSearches = 0;
+      await serviceClient
+        .from("usage_tracking")
+        .update({ 
+          searches_this_week: 0, 
+          week_reset_at: new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000).toISOString()
+        })
+        .eq("user_id", userId);
+    }
+    
+    // Check if user has exceeded their weekly limit
+    if (limits.searchesPerWeek !== Infinity && currentSearches >= limits.searchesPerWeek) {
+      return new Response(
+        JSON.stringify({ 
+          error: `Weekly search limit reached (${limits.searchesPerWeek} per week on ${tier} tier). Upgrade for more searches.`,
+          limitReached: true,
+          tier
+        }),
+        { status: 429, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+    
+    // Increment search count
+    await serviceClient
+      .from("usage_tracking")
+      .upsert({ 
+        user_id: userId, 
+        searches_this_week: currentSearches + 1,
+        week_reset_at: usage?.week_reset_at || new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000).toISOString()
+      }, { onConflict: "user_id" });
+    
+    const maxResults = limits.resultsPerSearch;
+    console.log(`User ${userId} (${tier} tier): search ${currentSearches + 1}/${limits.searchesPerWeek}, max results: ${maxResults}`);
+    
     const queries = buildSearchQueries(profile || { target_roles: null, work_type: null, location_zip: null });
     
     console.log(`User preferences: work_type=${profile?.work_type}, location_zip=${profile?.location_zip}`);
     console.log(`Running ${queries.length} search queries for user ${userId}`);
     
-    // Run searches with rate limiting
     const allResults: SearchResult[] = [];
     
     for (const query of queries) {
@@ -525,10 +596,11 @@ Deno.serve(async (req) => {
     
     console.log(`Total direct postings after extraction: ${directPostings.length}`);
     
-    // Fetch and extract details from direct job postings (limit to prevent timeouts)
+    // Fetch and extract details from direct job postings (limit based on tier)
     const enrichedJobs: ClassifiedJob[] = [];
+    const jobsToProcess = directPostings.slice(0, Math.min(maxResults, 15));
     
-    for (const job of directPostings.slice(0, 15)) {
+    for (const job of jobsToProcess) {
       console.log(`Fetching job details: ${job.url}`);
       const html = await fetchPageContent(job.url);
       

@@ -6,6 +6,15 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
 
+// Tier limits for tailoring
+const TIER_TAILOR_LIMITS = {
+  free: 0,
+  pro: 10,
+  premium: Infinity,
+} as const;
+
+type TierKey = keyof typeof TIER_TAILOR_LIMITS;
+
 // Simple PDF text extraction - extracts readable text from PDF
 async function extractTextFromPDF(pdfBuffer: ArrayBuffer): Promise<string> {
   const bytes = new Uint8Array(pdfBuffer);
@@ -67,6 +76,68 @@ serve(async (req) => {
     if (authError || !user) {
       return new Response(JSON.stringify({ error: "Unauthorized" }), {
         status: 401,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
+    // Check subscription tier and usage limits
+    const serviceClient = createClient(
+      Deno.env.get("SUPABASE_URL")!,
+      Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
+    );
+
+    const { data: subscription } = await serviceClient
+      .from("subscriptions")
+      .select("tier")
+      .eq("user_id", user.id)
+      .single();
+
+    const tier = (subscription?.tier || "free") as TierKey;
+    const monthlyLimit = TIER_TAILOR_LIMITS[tier];
+
+    if (monthlyLimit === 0) {
+      return new Response(JSON.stringify({ 
+        error: "Resume tailoring is a Pro feature. Upgrade to create custom resumes for each job.",
+        requiresUpgrade: true,
+        tier
+      }), {
+        status: 403,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
+    // Check and update usage
+    const { data: usage } = await serviceClient
+      .from("usage_tracking")
+      .select("*")
+      .eq("user_id", user.id)
+      .single();
+
+    const now = new Date();
+    let currentTailors = usage?.tailors_this_month || 0;
+
+    // Reset monthly counter if needed
+    if (usage && new Date(usage.month_reset_at) <= now) {
+      currentTailors = 0;
+      await serviceClient
+        .from("usage_tracking")
+        .update({ 
+          tailors_this_month: 0, 
+          month_reset_at: new Date(now.getFullYear(), now.getMonth() + 1, 1).toISOString()
+        })
+        .eq("user_id", user.id);
+    }
+
+    // Check if user has exceeded monthly limit
+    if (monthlyLimit !== Infinity && currentTailors >= monthlyLimit) {
+      return new Response(JSON.stringify({ 
+        error: `Monthly tailor limit reached (${monthlyLimit} per month on ${tier} tier). Upgrade to Premium for unlimited tailoring.`,
+        limitReached: true,
+        tier,
+        used: currentTailors,
+        limit: monthlyLimit
+      }), {
+        status: 429,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
@@ -373,11 +444,22 @@ IMPORTANT:
 
     console.log("Successfully generated tailored resume and cover letter");
 
+    // Increment tailor usage count
+    await serviceClient
+      .from("usage_tracking")
+      .upsert({ 
+        user_id: user.id, 
+        tailors_this_month: currentTailors + 1,
+        month_reset_at: usage?.month_reset_at || new Date(now.getFullYear(), now.getMonth() + 1, 1).toISOString()
+      }, { onConflict: "user_id" });
+
     return new Response(JSON.stringify({ 
       success: true,
       content,
       jobTitle,
-      companyName
+      companyName,
+      tailorsUsed: currentTailors + 1,
+      tailorsLimit: monthlyLimit === Infinity ? "unlimited" : monthlyLimit
     }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });

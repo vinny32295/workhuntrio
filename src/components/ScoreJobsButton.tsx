@@ -1,8 +1,15 @@
 import { useState } from "react";
+import { Link } from "react-router-dom";
 import { supabase } from "@/lib/supabase";
 import { Button } from "@/components/ui/button";
-import { Sparkles, Loader2, Check, AlertCircle } from "lucide-react";
+import { Sparkles, Loader2, Check, AlertCircle, Lock } from "lucide-react";
 import { toast } from "sonner";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 
 interface ScoreJobsButtonProps {
   hasResume: boolean;
@@ -10,16 +17,19 @@ interface ScoreJobsButtonProps {
 }
 
 interface ScoreResult {
-  success: boolean;
-  scored: number;
-  total: number;
+  success?: boolean;
+  scored?: number;
+  total?: number;
   message?: string;
   error?: string;
+  requiresUpgrade?: boolean;
+  tier?: string;
 }
 
 export default function ScoreJobsButton({ hasResume, onComplete }: ScoreJobsButtonProps) {
   const [isScoring, setIsScoring] = useState(false);
   const [lastResult, setLastResult] = useState<ScoreResult | null>(null);
+  const [requiresUpgrade, setRequiresUpgrade] = useState(false);
 
   const scoreJobs = async () => {
     if (!hasResume) {
@@ -48,13 +58,19 @@ export default function ScoreJobsButton({ hasResume, onComplete }: ScoreJobsButt
         throw new Error(error.message);
       }
 
+      if (data?.requiresUpgrade) {
+        setRequiresUpgrade(true);
+        toast.info("AI scoring is a Pro feature. Upgrade to get personalized match scores!");
+        return;
+      }
+
       if (data?.error) {
         throw new Error(data.error);
       }
 
       if (data?.success) {
         setLastResult(data);
-        if (data.scored > 0) {
+        if (data.scored && data.scored > 0) {
           toast.success(`Scored ${data.scored} jobs with AI matching!`);
           onComplete();
         } else {
@@ -68,6 +84,32 @@ export default function ScoreJobsButton({ hasResume, onComplete }: ScoreJobsButt
       setIsScoring(false);
     }
   };
+
+  if (requiresUpgrade) {
+    return (
+      <TooltipProvider>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Link to="/#pricing">
+              <Button variant="secondary" className="gap-2 opacity-70">
+                <Lock className="h-4 w-4" />
+                Score with AI
+              </Button>
+            </Link>
+          </TooltipTrigger>
+          <TooltipContent side="top" className="max-w-[220px] text-center p-3">
+            <p className="font-medium">Pro Feature</p>
+            <p className="text-xs text-muted-foreground mb-2">
+              AI job scoring helps you find the best matches
+            </p>
+            <span className="text-xs text-primary font-medium">
+              Click to upgrade →
+            </span>
+          </TooltipContent>
+        </Tooltip>
+      </TooltipProvider>
+    );
+  }
 
   return (
     <div className="flex items-center gap-3">
@@ -97,7 +139,7 @@ export default function ScoreJobsButton({ hasResume, onComplete }: ScoreJobsButt
         </span>
       )}
 
-      {lastResult && lastResult.scored > 0 && (
+      {lastResult && lastResult.scored && lastResult.scored > 0 && (
         <span className="text-sm text-primary flex items-center gap-1">
           <Check className="h-4 w-4" />
           {lastResult.scored} jobs scored
