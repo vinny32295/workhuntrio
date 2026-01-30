@@ -25,7 +25,7 @@ const tiers: Tier[] = [
     description: "Perfect for testing the waters",
     features: [
       "1 job search per week",
-      "5 job results per search",
+      "10 job results per search",
       "Basic job discovery",
       "Application tracking",
     ],
@@ -40,7 +40,7 @@ const tiers: Tier[] = [
     description: "For active job seekers ready to land their dream role",
     features: [
       "3 job searches per week",
-      "25 job results per search",
+      "50 job results per search",
       "AI-powered match scoring",
       "10 tailored resumes/month",
       "10 tailored cover letters/month",
@@ -57,7 +57,7 @@ const tiers: Tier[] = [
     description: "Maximum firepower for your job hunt",
     features: [
       "Unlimited job searches",
-      "50 job results per search",
+      "100 job results per search",
       "Priority AI matching",
       "Unlimited tailored resumes",
       "Unlimited cover letters",
