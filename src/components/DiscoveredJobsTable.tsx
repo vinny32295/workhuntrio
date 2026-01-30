@@ -69,6 +69,7 @@ export default function DiscoveredJobsTable({ userId }: DiscoveredJobsTableProps
   const [dateFilter, setDateFilter] = useState<DateFilter>("all");
   const [tailorDialogOpen, setTailorDialogOpen] = useState(false);
   const [selectedJob, setSelectedJob] = useState<DiscoveredJob | null>(null);
+  const [userTier, setUserTier] = useState<string>("free");
 
   // Debounce search input
   useEffect(() => {
@@ -80,7 +81,25 @@ export default function DiscoveredJobsTable({ userId }: DiscoveredJobsTableProps
 
   useEffect(() => {
     fetchDiscoveredJobs();
+    fetchUserTier();
   }, [userId, debouncedSearch, dateFilter]);
+
+  const fetchUserTier = async () => {
+    try {
+      const { data } = await supabase
+        .from("subscriptions")
+        .select("tier")
+        .eq("user_id", userId)
+        .single();
+      
+      if (data?.tier) {
+        setUserTier(data.tier);
+      }
+    } catch (error) {
+      // Default to free if no subscription found
+      setUserTier("free");
+    }
+  };
 
   // Jobs are now filtered server-side, so we just use the jobs array directly
   const filteredJobs = jobs;
@@ -365,17 +384,19 @@ export default function DiscoveredJobsTable({ userId }: DiscoveredJobsTableProps
                 </TableCell>
                 <TableCell className="text-right">
                   <div className="flex items-center justify-end gap-1">
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => {
-                        setSelectedJob(job);
-                        setTailorDialogOpen(true);
-                      }}
-                      title="Tailor resume & cover letter"
-                    >
-                      <Sparkles className="h-4 w-4 text-primary" />
-                    </Button>
+                    {userTier !== "free" && (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => {
+                          setSelectedJob(job);
+                          setTailorDialogOpen(true);
+                        }}
+                        title="Tailor resume & cover letter"
+                      >
+                        <Sparkles className="h-4 w-4 text-primary" />
+                      </Button>
+                    )}
                     <Button
                       variant="ghost"
                       size="sm"
