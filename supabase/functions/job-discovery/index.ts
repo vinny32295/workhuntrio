@@ -830,8 +830,17 @@ async function searchWorkdayCareerPage(
       const results = await serpApiSearch(query, serpApiKey, 5);
       
       for (const result of results) {
-        // Skip non-job pages
-        if (!result.url.includes("/job/") && !result.url.includes("/en-US/job/")) {
+        // Accept any URL from the Workday domain (they use various URL patterns)
+        // Workday URLs can be: /job/JobID, /en-US/job/JobID, /details/JobID, etc.
+        const isWorkdayJobUrl = result.url.includes(workdayDomain) && 
+          (result.url.includes("/job/") || 
+           result.url.includes("/jobs/") ||
+           result.url.includes("/details/") ||
+           result.url.includes("/requisition/") ||
+           // Match any URL with a job-like ID pattern at the end
+           /\/[a-f0-9-]{20,}|\/\d{5,}/.test(result.url));
+        
+        if (!isWorkdayJobUrl) {
           continue;
         }
         
@@ -1702,9 +1711,28 @@ Deno.serve(async (req) => {
     
     console.log(`Total direct postings after all extraction (including local companies): ${directPostings.length}`);
     
+    // IMPORTANT: Prioritize local company jobs by putting them first in the list
+    // This ensures they get processed before the limit is hit
+    const prioritizedPostings = [
+      ...localCompanyJobs.filter(j => !directPostings.slice(0, directPostings.length - localCompanyJobs.length).some(p => p.url === j.url)),
+      ...directPostings.filter(j => !localCompanyJobs.some(lc => lc.url === j.url))
+    ];
+    
+    // Dedupe the prioritized list
+    const finalPostings: ClassifiedJob[] = [];
+    const finalSeenUrls = new Set<string>();
+    for (const job of prioritizedPostings) {
+      if (!finalSeenUrls.has(job.url)) {
+        finalSeenUrls.add(job.url);
+        finalPostings.push(job);
+      }
+    }
+    
+    console.log(`Prioritized ${localCompanyJobs.length} local company jobs. Final postings: ${finalPostings.length}`);
+    
     // Use background task for enrichment to avoid timeout
     const backgroundTask = processAndSaveJobs(
-      directPostings,
+      finalPostings, // Use prioritized list with local companies first
       maxResults,
       lovableApiKey,
       supabase,
@@ -1729,8 +1757,8 @@ Deno.serve(async (req) => {
         extractedJobLinks: extractedJobUrls.length,
         localCompaniesSearched: localCompaniesSearchedCount,
         localCompanyJobs: localCompanyJobs.length,
-        enrichedJobs: Math.min(directPostings.length, maxResults, 10),
-        inserted: Math.min(directPostings.length, maxResults, 10),
+        enrichedJobs: Math.min(finalPostings.length, maxResults, 10),
+        inserted: Math.min(finalPostings.length, maxResults, 10),
         skipped: 0,
         withSalary: 0,
         withDescription: 0,
