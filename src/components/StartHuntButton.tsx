@@ -63,10 +63,11 @@ export default function StartHuntButton({ userId, hasPreferences, onComplete }: 
         toast.success(`Found ${jobCount} matching jobs! Loading results...`);
         
         // Jobs are processed in the background, so wait before refreshing
-        // Background enrichment can take 15-20 seconds for all jobs
-        setTimeout(() => onComplete(), 3000);
-        setTimeout(() => onComplete(), 8000);
-        setTimeout(() => onComplete(), 15000);
+        // Background enrichment can take 20-30 seconds for all jobs
+        setTimeout(() => onComplete(), 5000);
+        setTimeout(() => onComplete(), 12000);
+        setTimeout(() => onComplete(), 20000);
+        setTimeout(() => onComplete(), 30000);
       } else {
         throw new Error(data?.error || "Hunt failed");
       }
