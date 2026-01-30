@@ -1272,14 +1272,95 @@ ${truncatedHtml}`;
   }
 }
 
+// Check if a job title is relevant to target roles using AI
+async function isJobRelevantToRoles(
+  jobTitle: string,
+  targetRoles: string[],
+  lovableApiKey: string
+): Promise<{ isRelevant: boolean; reason: string }> {
+  if (!targetRoles || targetRoles.length === 0) {
+    return { isRelevant: true, reason: "No target roles specified" };
+  }
+  
+  // Quick keyword check first (avoid AI call for obvious matches)
+  const titleLower = jobTitle.toLowerCase();
+  for (const role of targetRoles) {
+    const roleLower = role.toLowerCase();
+    const roleWords = roleLower.split(/\s+/);
+    
+    // Check if all significant words from the role appear in the title
+    const significantWords = roleWords.filter(w => w.length > 2 && !['and', 'the', 'for', 'with'].includes(w));
+    const matchCount = significantWords.filter(word => titleLower.includes(word)).length;
+    
+    if (matchCount >= Math.ceil(significantWords.length * 0.5)) {
+      return { isRelevant: true, reason: `Matches target role: ${role}` };
+    }
+  }
+  
+  // Use AI for more nuanced matching
+  try {
+    const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${lovableApiKey}`,
+      },
+      body: JSON.stringify({
+        model: "google/gemini-2.5-flash-lite",
+        messages: [
+          {
+            role: "system",
+            content: `You are a job matching expert. Determine if a job title is relevant to a user's target roles.
+Consider:
+- Similar job functions (e.g., "Data Analyst" matches "Business Analyst")
+- Related seniority levels (e.g., "Senior Analyst" matches "Analyst")
+- Industry variations of the same role
+
+Be strict: "Jewelry Sales Specialist" does NOT match "Analyst".
+Respond with JSON only: {"isRelevant": boolean, "reason": "brief explanation"}`
+          },
+          {
+            role: "user",
+            content: `Job title: "${jobTitle}"
+Target roles: ${targetRoles.map(r => `"${r}"`).join(", ")}
+
+Is this job relevant to any of the target roles?`
+          }
+        ],
+        max_tokens: 100,
+        temperature: 0.1,
+      }),
+    });
+
+    if (!response.ok) {
+      console.error("AI relevance check failed:", response.status);
+      return { isRelevant: true, reason: "AI check failed, allowing by default" };
+    }
+
+    const result = await response.json();
+    const content = result.choices?.[0]?.message?.content || "";
+    
+    const jsonMatch = content.match(/\{[\s\S]*\}/);
+    if (jsonMatch) {
+      const parsed = JSON.parse(jsonMatch[0]);
+      return { isRelevant: !!parsed.isRelevant, reason: parsed.reason || "AI evaluation" };
+    }
+    
+    return { isRelevant: true, reason: "Could not parse AI response" };
+  } catch (error) {
+    console.error("Relevance check error:", error);
+    return { isRelevant: true, reason: "Error during check, allowing by default" };
+  }
+}
+
 // Process jobs in background and save to database
 async function processAndSaveJobs(
   directPostings: ClassifiedJob[],
   maxResults: number,
   lovableApiKey: string,
   userId: string,
-  userPreferences: { work_type: string[] | null; location_zip: string | null; search_radius_miles: number | null }
-): Promise<{ inserted: number; skipped: number; withSalary: number; withDescription: number; filteredByLocation: number }> {
+  userPreferences: { target_roles: string[] | null; work_type: string[] | null; location_zip: string | null; search_radius_miles: number | null }
+): Promise<{ inserted: number; skipped: number; withSalary: number; withDescription: number; filteredByLocation: number; filteredByRelevance: number }> {
   // IMPORTANT: Create a fresh service role client for background processing
   // The user-authenticated client won't work after the HTTP response is sent
   const serviceClient = createClient(
@@ -1342,14 +1423,29 @@ async function processAndSaveJobs(
     enrichedJobs.push(...results.filter((r): r is NonNullable<typeof r> => r !== null));
   }
   
-  // Insert into database with location validation
+  // Insert into database with location and relevance validation
   let inserted = 0;
   let skipped = 0;
   let withSalary = 0;
   let withDescription = 0;
   let filteredByLocation = 0;
+  let filteredByRelevance = 0;
+  
+  const targetRoles = userPreferences.target_roles || [];
   
   for (const job of enrichedJobs) {
+    // Validate job relevance to target roles
+    if (targetRoles.length > 0) {
+      const relevanceCheck = await isJobRelevantToRoles(job.title || "", targetRoles, lovableApiKey);
+      console.log(`Relevance check for "${job.title}": ${relevanceCheck.isRelevant ? "RELEVANT" : "NOT RELEVANT"} - ${relevanceCheck.reason}`);
+      
+      if (!relevanceCheck.isRelevant) {
+        console.log(`Skipping irrelevant job: ${job.title}`);
+        filteredByRelevance++;
+        continue;
+      }
+    }
+    
     // Validate location for in-person/hybrid jobs
     if (requiresLocationValidation) {
       const validation = await validateJobLocation(
@@ -1395,8 +1491,8 @@ async function processAndSaveJobs(
     }
   }
   
-  console.log(`Background processing complete: ${inserted} inserted, ${skipped} skipped, ${filteredByLocation} filtered by location`);
-  return { inserted, skipped, withSalary, withDescription, filteredByLocation };
+  console.log(`Background processing complete: ${inserted} inserted, ${skipped} skipped, ${filteredByLocation} filtered by location, ${filteredByRelevance} filtered by relevance`);
+  return { inserted, skipped, withSalary, withDescription, filteredByLocation, filteredByRelevance };
 }
 
 Deno.serve(async (req) => {
@@ -1746,6 +1842,7 @@ Deno.serve(async (req) => {
       lovableApiKey,
       userId,
       {
+        target_roles: profile?.target_roles || null,
         work_type: profile?.work_type || null,
         location_zip: profile?.location_zip || null,
         search_radius_miles: profile?.search_radius_miles || 50,
