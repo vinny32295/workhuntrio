@@ -1277,13 +1277,21 @@ async function processAndSaveJobs(
   directPostings: ClassifiedJob[],
   maxResults: number,
   lovableApiKey: string,
-  supabase: any,
   userId: string,
   userPreferences: { work_type: string[] | null; location_zip: string | null; search_radius_miles: number | null }
 ): Promise<{ inserted: number; skipped: number; withSalary: number; withDescription: number; filteredByLocation: number }> {
+  // IMPORTANT: Create a fresh service role client for background processing
+  // The user-authenticated client won't work after the HTTP response is sent
+  const serviceClient = createClient(
+    Deno.env.get("SUPABASE_URL")!,
+    Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
+  );
+  
   const enrichedJobs: (ClassifiedJob & { extractedLocation: string | null })[] = [];
   // Process up to maxResults (based on user tier: free=5, pro=25, premium=50)
   const jobsToProcess = directPostings.slice(0, maxResults);
+  
+  console.log(`Background task started: processing ${jobsToProcess.length} jobs for user ${userId}`);
   
   const workTypes = userPreferences.work_type || [];
   const hasInPersonOrHybrid = workTypes.includes("in-person") || workTypes.includes("hybrid");
@@ -1360,7 +1368,7 @@ async function processAndSaveJobs(
       }
     }
     
-    const { error } = await supabase.from("discovered_jobs").upsert(
+    const { error } = await serviceClient.from("discovered_jobs").upsert(
       {
         user_id: userId,
         url: job.url,
@@ -1736,7 +1744,6 @@ Deno.serve(async (req) => {
       finalPostings, // Use prioritized list with local companies first
       maxResults,
       lovableApiKey,
-      supabase,
       userId,
       {
         work_type: profile?.work_type || null,
