@@ -1345,6 +1345,107 @@ async function fetchPageContent(url: string, timeoutMs: number = 5000): Promise<
   }
 }
 
+// Extract job listings from Amazon.jobs HTML
+async function extractAmazonJobsFromHtml(
+  html: string,
+  pageUrl: string,
+  apiKey: string
+): Promise<ClassifiedJob[]> {
+  const truncatedHtml = html.substring(0, 100000); // Amazon pages can be large
+  
+  const prompt = `This is HTML from an Amazon Jobs search results page.
+Page URL: ${pageUrl}
+
+Amazon Jobs uses a React SPA. Look for:
+1. Job cards/tiles in the search results
+2. JSON data embedded in script tags (window.__INITIAL_DATA__ or similar)
+3. Links with href containing "/jobs/" or "/en/jobs/"
+4. Job IDs in data attributes or URLs (format: /jobs/12345 or similar)
+5. Any <a> tags with job titles and links
+
+For each job found, extract:
+- url: The full Amazon jobs URL (e.g., https://www.amazon.jobs/en/jobs/12345/job-title)
+- title: The job title
+- location: The job location if visible
+
+Return a JSON array with ALL jobs found (up to 30):
+[{"url": "https://www.amazon.jobs/en/jobs/12345/...", "title": "Job Title", "location": "Nashville, TN"}]
+
+IMPORTANT:
+- Extract EVERY job listing visible in the results
+- Make sure URLs are absolute and start with https://www.amazon.jobs
+- If URL is relative like /en/jobs/..., prepend https://www.amazon.jobs
+- Don't skip any jobs
+
+HTML (truncated):
+${truncatedHtml}`;
+
+  try {
+    const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: "google/gemini-2.5-flash",
+        messages: [
+          { role: "system", content: "You extract job listings from Amazon Jobs pages. Return valid JSON arrays only." },
+          { role: "user", content: prompt },
+        ],
+        temperature: 0.1,
+      }),
+    });
+
+    if (!response.ok) {
+      console.error("AI API error for Amazon extraction:", response.status);
+      return [];
+    }
+
+    const data = await response.json();
+    const content = data.choices?.[0]?.message?.content || "";
+    const jsonMatch = content.match(/\[[\s\S]*?\]/);
+    
+    if (!jsonMatch) {
+      console.log("No jobs extracted from Amazon HTML");
+      return [];
+    }
+
+    const rawJobs = JSON.parse(jsonMatch[0]) as Array<{ url: string; title: string; location?: string }>;
+    console.log(`Extracted ${rawJobs.length} jobs from Amazon.jobs`);
+    
+    // Convert to ClassifiedJob format
+    return rawJobs
+      .filter(j => j.url && j.title)
+      .map(j => {
+        let url = j.url;
+        // Fix relative URLs
+        if (url.startsWith("/")) {
+          url = "https://www.amazon.jobs" + url;
+        } else if (!url.startsWith("http")) {
+          url = "https://www.amazon.jobs/" + url;
+        }
+        
+        return {
+          url,
+          title: j.title,
+          snippet: j.location || "",
+          atsType: "amazon",
+          companySlug: "amazon",
+          salaryMin: null,
+          salaryMax: null,
+          salaryCurrency: null,
+          fullDescription: null,
+          requirements: null,
+          isDirectPosting: true,
+        };
+      });
+  } catch (error) {
+    console.error("Amazon extraction error:", error);
+    return [];
+  }
+}
+
 // Extract job links from a job board page using AI
 async function extractJobLinksFromPage(
   html: string,
@@ -1923,56 +2024,19 @@ Deno.serve(async (req) => {
                 const companyName = companyMatch ? companyMatch[1] : "Company";
                 jobs = await searchCompanyCareerPage(companyName, url, targetRoles, lovableApiKey, serpApiKey);
               } else if (urlLower.includes("amazon.jobs")) {
-                // Amazon.jobs is a JavaScript SPA - use Firecrawl to render it
+                // Amazon.jobs is a JavaScript SPA - use dedicated extractor with Firecrawl
                 console.log(`[BG] Using Firecrawl for Amazon.jobs: ${url}`);
                 const html = await scrapeAggregatorWithFirecrawl(url);
                 if (html) {
-                  const jobLinks = await extractJobLinksFromPage(html, url, lovableApiKey);
-                  console.log(`[BG] Firecrawl extracted ${jobLinks.length} job links from Amazon.jobs`);
-                  // Use local set for dedup within this URL only (don't use seenUrls)
-                  const localSeen = new Set<string>();
-                  for (const jobUrl of jobLinks) {
-                    if (!localSeen.has(jobUrl)) {
-                      localSeen.add(jobUrl);
-                      jobs.push({
-                        url: jobUrl,
-                        title: "",
-                        snippet: "",
-                        atsType: "amazon",
-                        companySlug: "amazon",
-                        salaryMin: null,
-                        salaryMax: null,
-                        salaryCurrency: null,
-                        fullDescription: null,
-                        requirements: null,
-                        isDirectPosting: true,
-                      });
-                    }
-                  }
+                  // Use the dedicated Amazon.jobs extraction function
+                  jobs = await extractAmazonJobsFromHtml(html, url, lovableApiKey);
+                  console.log(`[BG] Extracted ${jobs.length} jobs from Amazon.jobs`);
                 } else {
                   console.log(`[BG] Firecrawl failed for Amazon.jobs, trying direct fetch...`);
                   const fetchResult = await fetchPageContent(url, 5000);
                   if (fetchResult.html && !fetchResult.is404) {
-                    const jobLinks = await extractJobLinksFromPage(fetchResult.html, url, lovableApiKey);
-                    const localSeen = new Set<string>();
-                    for (const jobUrl of jobLinks) {
-                      if (!localSeen.has(jobUrl)) {
-                        localSeen.add(jobUrl);
-                        jobs.push({
-                          url: jobUrl,
-                          title: "",
-                          snippet: "",
-                          atsType: "amazon",
-                          companySlug: "amazon",
-                          salaryMin: null,
-                          salaryMax: null,
-                          salaryCurrency: null,
-                          fullDescription: null,
-                          requirements: null,
-                          isDirectPosting: true,
-                        });
-                      }
-                    }
+                    jobs = await extractAmazonJobsFromHtml(fetchResult.html, url, lovableApiKey);
+                    console.log(`[BG] Direct fetch extracted ${jobs.length} jobs from Amazon.jobs`);
                   }
                 }
               } else {
