@@ -8,7 +8,7 @@ const tiers = [
     period: "forever",
     description: "Perfect for testing the waters",
     features: [
-      "5 auto-applications per month",
+      "5 job results per search",
       "Basic job matching",
       "Email notifications",
       "1 job search profile",
