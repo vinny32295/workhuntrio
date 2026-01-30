@@ -1456,34 +1456,68 @@ ${truncatedHtml}`;
     const rawJobs = JSON.parse(jsonMatch[0]) as Array<{ url: string; title: string; location?: string }>;
     console.log(`Extracted ${rawJobs.length} jobs from Amazon.jobs`);
     
-    // Convert to ClassifiedJob format
-    return rawJobs
-      .filter(j => j.url && j.title)
-      .map(j => {
-        let url = j.url;
-        // Fix relative URLs
-        if (url.startsWith("/")) {
-          url = "https://www.amazon.jobs" + url;
-        } else if (!url.startsWith("http")) {
-          url = "https://www.amazon.jobs/" + url;
-        }
-        
-        return {
-          url,
-          title: j.title,
-          snippet: j.location || "",
-          atsType: "amazon",
-          companySlug: "amazon",
-          salaryMin: null,
-          salaryMax: null,
-          salaryCurrency: null,
-          fullDescription: null,
-          requirements: null,
-          isDirectPosting: true,
-          isFromTargetUrl: true, // Amazon jobs from target URL bypass relevance filtering
-          sourceUrl: pageUrl, // Track which target URL this job came from
-        };
+    // Log each extracted job for debugging
+    rawJobs.forEach((job, i) => {
+      console.log(`  Amazon job ${i + 1}: "${job.title}" - ${job.url}`);
+    });
+    
+    // Normalize and deduplicate Amazon URLs
+    const seenJobIds = new Set<string>();
+    
+    // Convert to ClassifiedJob format with deduplication
+    const results: ClassifiedJob[] = [];
+    
+    for (const j of rawJobs) {
+      if (!j.url || !j.title) continue;
+      
+      let url = j.url;
+      // Fix relative URLs
+      if (url.startsWith("/")) {
+        url = "https://www.amazon.jobs" + url;
+      } else if (!url.startsWith("http")) {
+        url = "https://www.amazon.jobs/" + url;
+      }
+      
+      // Normalize Amazon URLs by extracting just the job ID path
+      // e.g., https://www.amazon.jobs/en/jobs/3170854/title-here?query=...
+      // becomes https://www.amazon.jobs/en/jobs/3170854/title-here
+      try {
+        const parsed = new URL(url);
+        // Remove query params for deduplication
+        url = parsed.origin + parsed.pathname;
+        // Remove trailing slashes
+        url = url.replace(/\/+$/, "");
+      } catch {
+        // Keep original if parsing fails
+      }
+      
+      // Extract job ID for deduplication
+      const jobIdMatch = url.match(/\/jobs\/(\d+)\//);
+      const jobId = jobIdMatch ? jobIdMatch[1] : url;
+      
+      if (seenJobIds.has(jobId)) {
+        continue; // Skip duplicate
+      }
+      seenJobIds.add(jobId);
+      
+      results.push({
+        url,
+        title: j.title,
+        snippet: j.location || "",
+        atsType: "amazon",
+        companySlug: "amazon",
+        salaryMin: null,
+        salaryMax: null,
+        salaryCurrency: null,
+        fullDescription: null,
+        requirements: null,
+        isDirectPosting: true,
+        isFromTargetUrl: true, // Amazon jobs from target URL bypass relevance filtering
+        sourceUrl: pageUrl, // Track which target URL this job came from
       });
+    }
+    
+    return results;
   } catch (error) {
     console.error("Amazon extraction error:", error);
     return [];
