@@ -149,20 +149,34 @@ function filterResults(results: SearchResult[]): {
     
     const { type, companySlug } = classifyUrl(result.url);
     
-    // Only include if we can classify it
-    if (type) {
+    // Check if URL looks like a job/careers page (be more inclusive for trade/local jobs)
+    const looksLikeJobPage = /\/(careers?|jobs?|employment|work-with-us|join-us|hiring|positions?|openings?|apply|opportunities)/i.test(url);
+    
+    // Include if we can classify it OR if it looks like a job page
+    if (type || looksLikeJobPage) {
+      // Try to extract company from URL if not already classified
+      let finalCompanySlug = companySlug;
+      if (!finalCompanySlug) {
+        try {
+          const hostname = new URL(result.url).hostname.replace("www.", "");
+          finalCompanySlug = hostname.split(".")[0];
+        } catch {
+          finalCompanySlug = null;
+        }
+      }
+      
       classified.push({
         url: result.url,
         title: result.title,
         snippet: result.snippet,
-        atsType: type,
-        companySlug,
+        atsType: type || "careers_page",
+        companySlug: finalCompanySlug,
         salaryMin: null,
         salaryMax: null,
         salaryCurrency: null,
         fullDescription: null,
         requirements: null,
-        isDirectPosting: isDirectJobPosting(result.url),
+        isDirectPosting: isDirectJobPosting(result.url) || /\/jobs?\/\d+|\/position\/|\/opening\//i.test(url),
       });
     }
   }
@@ -488,7 +502,7 @@ If you cannot determine the location, return: {"unknown": true}`;
   }
 }
 
-// Roles that are typically entry-level / retail / hourly
+// Roles that are typically entry-level / retail / hourly / trades
 const ENTRY_LEVEL_ROLES = [
   "cashier", "retail", "sales associate", "store clerk", "barista", 
   "server", "waiter", "waitress", "host", "hostess", "busser", 
@@ -497,12 +511,46 @@ const ENTRY_LEVEL_ROLES = [
   "customer service", "front desk", "receptionist", "call center",
   "driver", "delivery", "courier", "cleaning", "janitor", "housekeeper",
   "security", "guard", "laborer", "construction", "hvac", "technician",
-  "mechanic", "plumber", "electrician", "maintenance"
+  "mechanic", "plumber", "electrician", "maintenance", "apprentice",
+  "journeyman", "helper", "installer", "repair"
+];
+
+// Trade/skilled labor roles that need specific search strategies
+const TRADE_ROLES = [
+  "electrician", "plumber", "hvac", "carpenter", "welder", "mechanic",
+  "technician", "maintenance", "installer", "apprentice", "journeyman",
+  "contractor", "construction", "lineman", "cable", "solar"
 ];
 
 function isEntryLevelRole(role: string): boolean {
   const roleLower = role.toLowerCase();
   return ENTRY_LEVEL_ROLES.some(r => roleLower.includes(r));
+}
+
+function isTradeRole(role: string): boolean {
+  const roleLower = role.toLowerCase();
+  return TRADE_ROLES.some(r => roleLower.includes(r));
+}
+
+// Map ZIP prefix to specific cities for better search targeting
+const ZIP_TO_CITIES: Record<string, string[]> = {
+  "37": ["Nashville", "Memphis", "Knoxville", "Chattanooga", "Murfreesboro", "Clarksville"],
+  "30": ["Atlanta", "Marietta", "Alpharetta", "Roswell"],
+  "10": ["New York", "Manhattan", "Brooklyn"],
+  "90": ["Los Angeles", "Long Beach", "Pasadena"],
+  "94": ["San Francisco", "Oakland", "San Jose"],
+  "98": ["Seattle", "Tacoma", "Bellevue"],
+  "60": ["Chicago", "Evanston", "Oak Park"],
+  "75": ["Dallas", "Fort Worth", "Plano", "Irving"],
+  "78": ["Austin", "San Antonio", "Round Rock"],
+  "33": ["Miami", "Fort Lauderdale", "West Palm Beach"],
+  "80": ["Denver", "Aurora", "Boulder"],
+};
+
+function getCitiesFromZip(zip: string | null): string[] {
+  if (!zip || zip.length < 2) return [];
+  const prefix = zip.substring(0, 2);
+  return ZIP_TO_CITIES[prefix] || [];
 }
 
 // Build search queries from user preferences
@@ -515,6 +563,8 @@ function buildSearchQueries(preferences: {
   const roles = preferences.target_roles || ["product manager", "operations manager"];
   const workType = preferences.work_type || "remote";
   const location = getLocationFromZip(preferences.location_zip);
+  const cities = getCitiesFromZip(preferences.location_zip);
+  const primaryCity = cities[0] || location || "";
   
   // For in-person or hybrid, include location in searches
   const locationTerm = (workType === "in-person" || workType === "hybrid") && location 
@@ -523,15 +573,26 @@ function buildSearchQueries(preferences: {
   
   for (const role of roles.slice(0, 3)) {
     const isEntryLevel = isEntryLevelRole(role);
+    const isTrade = isTradeRole(role);
     
     if (workType === "remote") {
       // Remote searches - target specific job postings, not just boards
       queries.push(`site:boards.greenhouse.io/*/jobs remote "${role}"`);
       queries.push(`site:jobs.lever.co remote "${role}" apply`);
       queries.push(`remote "${role}" jobs hiring 2026`);
+    } else if (isTrade) {
+      // Trade/skilled labor jobs - these are on contractor sites, unions, and specialty boards
+      // Use city name for more specific results
+      queries.push(`"${role}" jobs "${primaryCity}" hiring now`);
+      queries.push(`"${role}" "${primaryCity}" careers apply`);
+      queries.push(`"${role}" contractor "${locationTerm}" employment`);
+      queries.push(`"hiring ${role}" near "${primaryCity}" full time`);
+      // Target company career pages directly
+      queries.push(`"${role}" jobs site:*.com/careers "${locationTerm}"`);
+      // Try specific employers
+      queries.push(`"${role}" "${primaryCity}" -indeed -linkedin -glassdoor -ziprecruiter apply`);
     } else if (isEntryLevel) {
       // Entry-level/retail jobs - focus on aggregators and direct company searches
-      // These rarely appear on tech-focused ATS platforms
       queries.push(`"${role}" jobs "${locationTerm}" hiring now apply`);
       queries.push(`"${role}" "${locationTerm}" careers site:*.com/careers`);
       queries.push(`site:snagajob.com "${role}" ${locationTerm}`);
@@ -547,7 +608,7 @@ function buildSearchQueries(preferences: {
   }
   
   // Add ATS searches for non-entry-level roles
-  const hasNonEntryLevel = roles.some(r => !isEntryLevelRole(r));
+  const hasNonEntryLevel = roles.some(r => !isEntryLevelRole(r) && !isTradeRole(r));
   if (hasNonEntryLevel) {
     if (locationTerm) {
       queries.push(`site:apply.workable.com/*/j ${locationTerm}`);
