@@ -1770,12 +1770,17 @@ Deno.serve(async (req) => {
     
     const userId = claimsData.claims.sub as string;
     
-    // Get user preferences
+    // Get user preferences including company targets
     const { data: profile } = await supabase
       .from("profiles")
-      .select("target_roles, work_type, location_zip, search_radius_miles")
+      .select("target_roles, work_type, location_zip, search_radius_miles, target_company_urls, search_mode")
       .eq("user_id", userId)
       .single();
+    
+    const searchMode = profile?.search_mode || "combined";
+    const targetCompanyUrls = profile?.target_company_urls || [];
+    
+    console.log(`Search mode: ${searchMode}, Target company URLs: ${targetCompanyUrls.length}`);
     
     // Use service role client for usage/subscription queries
     const serviceClient = createClient(
@@ -1840,54 +1845,129 @@ Deno.serve(async (req) => {
     const maxResults = limits.resultsPerSearch;
     console.log(`User ${userId} (${tier} tier): search ${currentSearches + 1}/${limits.searchesPerWeek}, max results: ${maxResults}`);
     
-    const queries = buildSearchQueries(profile || { target_roles: null, work_type: null, location_zip: null });
+    let allResults: SearchResult[] = [];
+    let classifiedJobs: ClassifiedJob[] = [];
+    let aggregatorUrls: string[] = [];
+    let directPostings: ClassifiedJob[] = [];
+    let boardPages: ClassifiedJob[] = [];
     
-    console.log(`User preferences: work_type=${JSON.stringify(profile?.work_type)}, location_zip=${profile?.location_zip}`);
-    console.log(`Running ${queries.length} search queries for user ${userId}`);
-    
-    const allResults: SearchResult[] = [];
-    
-    for (const query of queries) {
-      try {
-        console.log(`Searching: ${query}`);
-        const results = await serpApiSearch(query, serpApiKey, 10);
-        allResults.push(...results);
-        console.log(`Found ${results.length} results for query`);
-        
-        // Rate limit: wait 500ms between requests
-        await new Promise(resolve => setTimeout(resolve, 500));
-      } catch (err) {
-        console.error(`Search failed for query "${query}":`, err);
+    // Only run general search if not in urls_only mode
+    if (searchMode !== "urls_only") {
+      const queries = buildSearchQueries(profile || { target_roles: null, work_type: null, location_zip: null });
+      
+      console.log(`User preferences: work_type=${JSON.stringify(profile?.work_type)}, location_zip=${profile?.location_zip}`);
+      console.log(`Running ${queries.length} search queries for user ${userId}`);
+      
+      for (const query of queries) {
+        try {
+          console.log(`Searching: ${query}`);
+          const results = await serpApiSearch(query, serpApiKey, 10);
+          allResults.push(...results);
+          console.log(`Found ${results.length} results for query`);
+          
+          // Rate limit: wait 500ms between requests
+          await new Promise(resolve => setTimeout(resolve, 500));
+        } catch (err) {
+          console.error(`Search failed for query "${query}":`, err);
+        }
       }
+      
+      // Dedupe by URL and classify
+      const seenUrls = new Set<string>();
+      const uniqueResults = allResults.filter(r => {
+        if (seenUrls.has(r.url)) return false;
+        seenUrls.add(r.url);
+        return true;
+      });
+      
+      const filtered = filterResults(uniqueResults);
+      classifiedJobs = filtered.classified;
+      aggregatorUrls = filtered.aggregatorUrls;
+      
+      console.log(`Found ${classifiedJobs.length} relevant jobs, ${aggregatorUrls.length} aggregator pages from ${uniqueResults.length} unique results`);
+      
+      // Separate direct postings from board pages
+      directPostings = classifiedJobs.filter(j => j.isDirectPosting);
+      boardPages = classifiedJobs.filter(j => !j.isDirectPosting);
+      
+      console.log(`Direct postings: ${directPostings.length}, Board pages: ${boardPages.length}, Aggregators: ${aggregatorUrls.length}`);
+    } else {
+      console.log(`Skipping general search (urls_only mode)`);
     }
     
-    // Dedupe by URL and classify
+    // Track seen URLs to avoid duplicates (shared across all processing)
     const seenUrls = new Set<string>();
-    const uniqueResults = allResults.filter(r => {
-      if (seenUrls.has(r.url)) return false;
-      seenUrls.add(r.url);
-      return true;
-    });
-    
-    const { classified: classifiedJobs, aggregatorUrls } = filterResults(uniqueResults);
-    
-    console.log(`Found ${classifiedJobs.length} relevant jobs, ${aggregatorUrls.length} aggregator pages from ${uniqueResults.length} unique results`);
-    
-    // Separate direct postings from board pages
-    const directPostings: ClassifiedJob[] = classifiedJobs.filter(j => j.isDirectPosting);
-    const boardPages = classifiedJobs.filter(j => !j.isDirectPosting);
-    
-    console.log(`Direct postings: ${directPostings.length}, Board pages: ${boardPages.length}, Aggregators: ${aggregatorUrls.length}`);
+    directPostings.forEach(j => seenUrls.add(j.url));
     
     // Move ALL heavy processing to background to avoid timeout
     // Return response immediately with preliminary data
     const backgroundTask = async () => {
       try {
+        const targetRoles = profile?.target_roles || [];
+        const workTypes = profile?.work_type || [];
+        
+        // FIRST: Process user's target company URLs if in combined or urls_only mode
+        let targetUrlJobs: ClassifiedJob[] = [];
+        if (searchMode !== "search_only" && targetCompanyUrls.length > 0) {
+          console.log(`[BG] Processing ${targetCompanyUrls.length} target company URLs...`);
+          
+          for (const url of targetCompanyUrls) {
+            try {
+              // Detect URL type and scrape accordingly
+              const urlLower = url.toLowerCase();
+              let jobs: ClassifiedJob[] = [];
+              
+              if (urlLower.includes(".myworkdayjobs.com")) {
+                // Workday URL - use the searchWorkdayCareerPage function
+                const companyMatch = url.match(/https?:\/\/(\w+)\.wd\d+\.myworkdayjobs\.com/);
+                const companyName = companyMatch ? companyMatch[1] : "Company";
+                jobs = await searchCompanyCareerPage(companyName, url, targetRoles, lovableApiKey, serpApiKey);
+              } else {
+                // Generic career page - scrape for job links
+                const fetchResult = await fetchPageContent(url, 5000);
+                if (fetchResult.html && !fetchResult.is404) {
+                  const jobLinks = await extractJobLinksFromPage(fetchResult.html, url, lovableApiKey);
+                  for (const jobUrl of jobLinks) {
+                    if (!seenUrls.has(jobUrl)) {
+                      seenUrls.add(jobUrl);
+                      const { type, companySlug } = classifyUrl(jobUrl);
+                      jobs.push({
+                        url: jobUrl,
+                        title: "",
+                        snippet: "",
+                        atsType: type || "careers_page",
+                        companySlug,
+                        salaryMin: null,
+                        salaryMax: null,
+                        salaryCurrency: null,
+                        fullDescription: null,
+                        requirements: null,
+                        isDirectPosting: true,
+                      });
+                    }
+                  }
+                }
+              }
+              
+              for (const job of jobs) {
+                if (!seenUrls.has(job.url)) {
+                  seenUrls.add(job.url);
+                  targetUrlJobs.push(job);
+                }
+              }
+              
+              console.log(`[BG] Found ${jobs.length} jobs from target URL: ${url}`);
+            } catch (err) {
+              console.error(`[BG] Error processing target URL ${url}:`, err);
+            }
+          }
+          
+          console.log(`[BG] Total jobs from target URLs: ${targetUrlJobs.length}`);
+        }
+        
         // Discover local companies based on zipcode and search their career pages
         const cities = getCitiesFromZip(profile?.location_zip);
         const primaryCity = cities[0];
-        const targetRoles = profile?.target_roles || [];
-        const workTypes = profile?.work_type || [];
         const hasLocalJobs = workTypes.includes("in-person") || workTypes.includes("hybrid");
         let localCompanyJobs: ClassifiedJob[] = [];
         let localCompaniesSearchedCount = 0;
@@ -2044,12 +2124,21 @@ Deno.serve(async (req) => {
           }
         }
         
+        // Add jobs from target company URLs (prioritize these)
+        for (const job of targetUrlJobs) {
+          if (!seenUrls.has(job.url)) {
+            seenUrls.add(job.url);
+            allJobs.push(job);
+          }
+        }
+        
         console.log(`[BG] Total jobs after all extraction: ${allJobs.length}`);
         
-        // Prioritize local company jobs by putting them first
+        // Prioritize target URL jobs, then local company jobs by putting them first
         const prioritizedPostings = [
-          ...localCompanyJobs.filter(j => !allJobs.slice(0, allJobs.length - localCompanyJobs.length).some(p => p.url === j.url)),
-          ...allJobs.filter(j => !localCompanyJobs.some(lc => lc.url === j.url))
+          ...targetUrlJobs, // Target URLs first (user-specified)
+          ...localCompanyJobs.filter(j => !targetUrlJobs.some(t => t.url === j.url)),
+          ...allJobs.filter(j => !localCompanyJobs.some(lc => lc.url === j.url) && !targetUrlJobs.some(t => t.url === j.url))
         ];
         
         // Dedupe the prioritized list
@@ -2062,7 +2151,7 @@ Deno.serve(async (req) => {
           }
         }
         
-        console.log(`[BG] Prioritized ${localCompanyJobs.length} local company jobs. Final postings: ${finalPostings.length}`);
+        console.log(`[BG] Prioritized ${targetUrlJobs.length} target URL jobs + ${localCompanyJobs.length} local company jobs. Final postings: ${finalPostings.length}`);
         
         // Process and save jobs
         await processAndSaveJobs(
@@ -2091,8 +2180,9 @@ Deno.serve(async (req) => {
     return new Response(
       JSON.stringify({
         success: true,
-        queriesRun: queries.length,
-        totalResults: uniqueResults.length,
+        queriesRun: searchMode === "urls_only" ? 0 : allResults.length,
+        totalResults: classifiedJobs.length,
+        targetCompanyUrls: targetCompanyUrls.length,
         boardPagesScraped: boardPages.length,
         extractedJobLinks: directPostings.length,
         localCompaniesSearched: 0, // Will be processed in background
