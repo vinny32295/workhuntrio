@@ -11,9 +11,9 @@ const corsHeaders = {
 
 // Tier limits configuration
 const TIER_LIMITS = {
-  free: { searchesPerWeek: 1, resultsPerSearch: 5 },
-  pro: { searchesPerWeek: 3, resultsPerSearch: 25 },
-  premium: { searchesPerWeek: Infinity, resultsPerSearch: 50 },
+  free: { searchesPerWeek: 1, resultsPerSearch: 10 },
+  pro: { searchesPerWeek: 3, resultsPerSearch: 50 },
+  premium: { searchesPerWeek: Infinity, resultsPerSearch: 100 },
 } as const;
 
 type TierKey = keyof typeof TIER_LIMITS;
