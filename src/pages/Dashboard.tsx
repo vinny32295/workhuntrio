@@ -10,6 +10,7 @@ import JobApplicationsTable from "@/components/JobApplicationsTable";
 import DiscoveredJobsTable from "@/components/DiscoveredJobsTable";
 import StartHuntButton from "@/components/StartHuntButton";
 import ScoreJobsButton from "@/components/ScoreJobsButton";
+import Footer from "@/components/Footer";
 import { TierKey } from "@/lib/stripe";
 import {
   Collapsible,
@@ -298,6 +299,8 @@ const Dashboard = () => {
           </div>
         </div>
       </main>
+
+      <Footer />
     </div>
   );
 };
