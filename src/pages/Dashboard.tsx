@@ -2,13 +2,15 @@ import { useState, useEffect } from "react";
 import { useNavigate, Link } from "react-router-dom";
 import { supabase } from "@/lib/supabase";
 import { Button } from "@/components/ui/button";
-import { Crosshair, LogOut, Settings, BarChart3, ChevronDown, Search, User } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
+import { Crosshair, LogOut, Settings, BarChart3, ChevronDown, Search, User, Crown, Sparkles } from "lucide-react";
 import type { User as SupabaseUser } from "@supabase/supabase-js";
 import JobPreferencesForm from "@/components/JobPreferencesForm";
 import JobApplicationsTable from "@/components/JobApplicationsTable";
 import DiscoveredJobsTable from "@/components/DiscoveredJobsTable";
 import StartHuntButton from "@/components/StartHuntButton";
 import ScoreJobsButton from "@/components/ScoreJobsButton";
+import { TierKey } from "@/lib/stripe";
 import {
   Collapsible,
   CollapsibleContent,
@@ -36,7 +38,19 @@ const Dashboard = () => {
   const [profile, setProfile] = useState<Profile | null>(null);
   const [loading, setLoading] = useState(true);
   const [discoveredJobsKey, setDiscoveredJobsKey] = useState(0);
+  const [subscriptionTier, setSubscriptionTier] = useState<TierKey>("free");
   const navigate = useNavigate();
+
+  const checkSubscription = async () => {
+    try {
+      const { data, error } = await supabase.functions.invoke("check-subscription");
+      if (!error && data?.tier) {
+        setSubscriptionTier(data.tier as TierKey);
+      }
+    } catch (err) {
+      console.error("Error checking subscription:", err);
+    }
+  };
 
   const fetchProfile = async (userId: string) => {
     try {
@@ -74,6 +88,7 @@ const Dashboard = () => {
         navigate("/auth");
       } else {
         fetchProfile(session.user.id);
+        checkSubscription();
       }
     });
 
@@ -113,6 +128,37 @@ const Dashboard = () => {
     return 'U';
   };
 
+  const getTierBadge = () => {
+    switch (subscriptionTier) {
+      case "premium":
+        return (
+          <Link to="/#pricing">
+            <Badge className="bg-gradient-to-r from-amber-500 to-orange-500 text-white border-0 gap-1 cursor-pointer hover:opacity-90">
+              <Crown className="h-3 w-3" />
+              Premium
+            </Badge>
+          </Link>
+        );
+      case "pro":
+        return (
+          <Link to="/#pricing">
+            <Badge className="bg-gradient-to-r from-primary to-cyan-500 text-white border-0 gap-1 cursor-pointer hover:opacity-90">
+              <Sparkles className="h-3 w-3" />
+              Pro
+            </Badge>
+          </Link>
+        );
+      default:
+        return (
+          <Link to="/#pricing">
+            <Badge variant="outline" className="gap-1 cursor-pointer hover:bg-primary/10">
+              Free
+            </Badge>
+          </Link>
+        );
+    }
+  };
+
   if (loading) {
     return (
       <div className="min-h-screen bg-background flex items-center justify-center">
@@ -137,7 +183,8 @@ const Dashboard = () => {
             </span>
           </Link>
 
-          <div className="flex items-center gap-4">
+          <div className="flex items-center gap-3">
+            {getTierBadge()}
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <Button variant="ghost" className="flex items-center gap-2 px-2">
