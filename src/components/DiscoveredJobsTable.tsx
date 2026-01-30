@@ -19,7 +19,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { ExternalLink, Plus, Check, Loader2, Search, Filter, X, Sparkles, Lock } from "lucide-react";
+import { ExternalLink, Plus, Check, Loader2, Search, Filter, X, Sparkles, Lock, ArrowUpDown, ArrowUp, ArrowDown } from "lucide-react";
 import { toast } from "sonner";
 import TailorResumeDialog from "./TailorResumeDialog";
 import {
@@ -66,6 +66,7 @@ interface DiscoveredJobsTableProps {
 }
 
 type DateFilter = "all" | "today" | "week";
+type SortOrder = "newest" | "oldest" | "match";
 
 export default function DiscoveredJobsTable({ userId }: DiscoveredJobsTableProps) {
   const [jobs, setJobs] = useState<DiscoveredJob[]>([]);
@@ -74,6 +75,7 @@ export default function DiscoveredJobsTable({ userId }: DiscoveredJobsTableProps
   const [titleSearch, setTitleSearch] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
   const [dateFilter, setDateFilter] = useState<DateFilter>("all");
+  const [sortOrder, setSortOrder] = useState<SortOrder>("newest");
   const [tailorDialogOpen, setTailorDialogOpen] = useState(false);
   const [selectedJob, setSelectedJob] = useState<DiscoveredJob | null>(null);
   const [userTier, setUserTier] = useState<string>("free");
@@ -89,7 +91,7 @@ export default function DiscoveredJobsTable({ userId }: DiscoveredJobsTableProps
   useEffect(() => {
     fetchDiscoveredJobs();
     fetchUserTier();
-  }, [userId, debouncedSearch, dateFilter]);
+  }, [userId, debouncedSearch, dateFilter, sortOrder]);
 
   const fetchUserTier = async () => {
     try {
@@ -114,9 +116,10 @@ export default function DiscoveredJobsTable({ userId }: DiscoveredJobsTableProps
   const clearFilters = () => {
     setTitleSearch("");
     setDateFilter("all");
+    setSortOrder("newest");
   };
 
-  const hasActiveFilters = titleSearch || dateFilter !== "all";
+  const hasActiveFilters = titleSearch || dateFilter !== "all" || sortOrder !== "newest";
 
   const fetchDiscoveredJobs = async () => {
     setLoading(true);
@@ -144,10 +147,19 @@ export default function DiscoveredJobsTable({ userId }: DiscoveredJobsTableProps
         query = query.gte("discovered_at", weekAgo.toISOString());
       }
 
-      const { data, error } = await query
-        .order("match_score", { ascending: false, nullsFirst: false })
-        .order("discovered_at", { ascending: false })
-        .limit(100);
+      // Apply sorting based on selected order
+      if (sortOrder === "match") {
+        query = query
+          .order("match_score", { ascending: false, nullsFirst: false })
+          .order("discovered_at", { ascending: false });
+      } else if (sortOrder === "oldest") {
+        query = query.order("discovered_at", { ascending: true });
+      } else {
+        // Default: newest first
+        query = query.order("discovered_at", { ascending: false });
+      }
+
+      const { data, error } = await query.limit(100);
 
       if (error) throw error;
       setJobs(data || []);
@@ -283,6 +295,17 @@ export default function DiscoveredJobsTable({ userId }: DiscoveredJobsTableProps
             <SelectItem value="all">All time</SelectItem>
             <SelectItem value="today">Today</SelectItem>
             <SelectItem value="week">This week</SelectItem>
+          </SelectContent>
+        </Select>
+        <Select value={sortOrder} onValueChange={(v) => setSortOrder(v as SortOrder)}>
+          <SelectTrigger className="w-full sm:w-[160px]">
+            <ArrowUpDown className="h-4 w-4 mr-2" />
+            <SelectValue placeholder="Sort by" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="newest">Newest first</SelectItem>
+            <SelectItem value="oldest">Oldest first</SelectItem>
+            <SelectItem value="match">Best match</SelectItem>
           </SelectContent>
         </Select>
         {hasActiveFilters && (
