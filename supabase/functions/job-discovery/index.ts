@@ -1799,37 +1799,31 @@ async function processAndSaveJobs(
               const internationalPattern = /\b(jpn|japan|ita|italy|deu|germany|gbr|uk|chn|china|ind|india|aus|australia|mex|mexico|bra|brazil|fra|france|esp|spain|kor|korea|sgp|singapore|isr|israel|nld|netherlands|bel|belgium|swe|sweden|nor|norway|dnk|denmark|fin|finland|irl|ireland|pol|poland|cze|czech|aut|austria|che|switzerland|nzl|zealand|rou|romania|ukr|ukraine|tur|turkey|egy|egypt|zaf|africa|arg|argentina|col|colombia|chl|chile|per|peru|phl|philippines|idn|indonesia|mys|malaysia|tha|thailand|vnm|vietnam|twn|taiwan|hkg|hong kong|osaka|nagoya|tokyo|melbourne|sydney|london|munich|berlin|paris|madrid|toronto|vancouver)\b/i;
               const hasInternationalLocation = internationalPattern.test(location);
               
-              // If target URL has US filter, trust it - keep all jobs from that search
-              if (targetUrlHasUSFilter) {
+              // FIRST: Skip explicitly international jobs - even if the URL has US filters
+              // Amazon and other sites sometimes return international results despite location filters
+              if (hasInternationalLocation && !hasUSLocation) {
+                console.log(`Target URL job SKIPPED (INTERNATIONAL): "${enrichedJob.title}" at ${enrichedJob.extractedLocation}`);
+                skipped++;
+                return;
+              }
+              
+              // Now handle US/local jobs
+              if (hasUSLocation) {
                 // Jobs with Nashville/TN in their location get highest priority
-                if (hasUSLocation && location.match(/\b(nashville|tennessee|, tn)\b/i)) {
-                  proximityScore = 0.95;
-                  console.log(`Target URL job (LOCAL - TN): "${enrichedJob.title}" at ${enrichedJob.extractedLocation}`);
-                } else if (hasUSLocation) {
-                  proximityScore = 0.85; // Other US locations from filtered search
-                  console.log(`Target URL job (US from filtered search): "${enrichedJob.title}" at ${enrichedJob.extractedLocation}`);
-                } else {
-                  // Even if location parsing failed, trust the user's URL filter
-                  proximityScore = 0.7;
-                  console.log(`Target URL job (TRUSTED from US-filtered search): "${enrichedJob.title}" at ${enrichedJob.extractedLocation}`);
-                }
-              } else if (hasUSLocation) {
-                // No URL filter but job location shows US
                 if (location.match(/\b(nashville|tennessee|, tn)\b/i)) {
                   proximityScore = 0.95;
                   console.log(`Target URL job (LOCAL - TN): "${enrichedJob.title}" at ${enrichedJob.extractedLocation}`);
                 } else {
-                  proximityScore = 0.7;
+                  proximityScore = 0.85; // Other US locations
                   console.log(`Target URL job (US): "${enrichedJob.title}" at ${enrichedJob.extractedLocation}`);
                 }
               } else if (location.match(/\b(remote|virtual|work from home|wfh)\b/i)) {
                 proximityScore = 0.85;
                 console.log(`Target URL job (REMOTE): "${enrichedJob.title}" at ${enrichedJob.extractedLocation}`);
-              } else if (hasInternationalLocation) {
-                // ONLY skip if there's NO US filter on the target URL
-                console.log(`Target URL job SKIPPED (INTERNATIONAL ONLY): "${enrichedJob.title}" at ${enrichedJob.extractedLocation}`);
-                skipped++;
-                return;
+              } else if (targetUrlHasUSFilter) {
+                // Location is ambiguous but the URL has US filter - give benefit of doubt
+                proximityScore = 0.7;
+                console.log(`Target URL job (TRUSTED from US-filtered search): "${enrichedJob.title}" at ${enrichedJob.extractedLocation}`);
               } else {
                 proximityScore = 0.6;
                 console.log(`Target URL job (UNKNOWN LOC): "${enrichedJob.title}" at ${enrichedJob.extractedLocation}`);
