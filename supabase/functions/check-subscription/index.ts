@@ -51,8 +51,28 @@ serve(async (req) => {
     const customers = await stripe.customers.list({ email: user.email, limit: 1 });
     
     if (customers.data.length === 0) {
-      logStep("No customer found, user is on free tier");
-      // Update subscriptions table to free
+      logStep("No Stripe customer found, checking database for admin-assigned tier");
+      
+      // Check the database for an admin-assigned tier
+      const { data: dbSubscription } = await supabaseClient
+        .from("subscriptions")
+        .select("tier, status")
+        .eq("user_id", user.id)
+        .maybeSingle();
+      
+      if (dbSubscription && dbSubscription.tier !== "free") {
+        logStep("Found admin-assigned tier in database", { tier: dbSubscription.tier });
+        return new Response(JSON.stringify({ 
+          subscribed: true, 
+          tier: dbSubscription.tier 
+        }), {
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+          status: 200,
+        });
+      }
+      
+      logStep("No admin-assigned tier, user is on free tier");
+      // Ensure subscriptions table has free tier entry
       await supabaseClient
         .from("subscriptions")
         .upsert({ user_id: user.id, tier: "free", status: "active" }, { onConflict: "user_id" });
