@@ -584,6 +584,54 @@ const KNOWN_WORKDAY_COMPANIES: Record<string, string> = {
   "pwc": "https://pwc.wd1.myworkdayjobs.com/Global_Experienced_Careers",
 };
 
+// Hardcoded major employers by city (to guarantee discovery)
+const CITY_MAJOR_EMPLOYERS: Record<string, { name: string; careersUrl: string }[]> = {
+  "nashville": [
+    { name: "AllianceBernstein", careersUrl: "https://abglobal.wd1.myworkdayjobs.com/alliancebernsteincareers" },
+    { name: "HCA Healthcare", careersUrl: "https://hcahealthcare.wd1.myworkdayjobs.com/HCAHealthcare" },
+    { name: "Nissan North America", careersUrl: "https://nissan.wd1.myworkdayjobs.com/Nissan_Careers" },
+    { name: "Asurion", careersUrl: "https://asurion.wd1.myworkdayjobs.com/Asurion" },
+    { name: "Bridgestone Americas", careersUrl: "https://bridgestone.wd1.myworkdayjobs.com/External" },
+    { name: "Dollar General", careersUrl: "https://dollargeneral.wd1.myworkdayjobs.com/DollarGeneral" },
+  ],
+  "atlanta": [
+    { name: "Delta Air Lines", careersUrl: "https://delta.wd5.myworkdayjobs.com/delta" },
+    { name: "Home Depot", careersUrl: "https://careers.homedepot.com" },
+    { name: "UPS", careersUrl: "https://www.jobs-ups.com" },
+    { name: "Coca-Cola", careersUrl: "https://coke.wd1.myworkdayjobs.com/coca-cola-careers" },
+  ],
+  "new york": [
+    { name: "JPMorgan Chase", careersUrl: "https://jpmc.fa.oraclecloud.com/hcmUI/CandidateExperience" },
+    { name: "Citigroup", careersUrl: "https://citi.wd5.myworkdayjobs.com/2" },
+    { name: "Goldman Sachs", careersUrl: "https://www.goldmansachs.com/careers" },
+  ],
+  "chicago": [
+    { name: "Boeing", careersUrl: "https://boeing.wd1.myworkdayjobs.com/external" },
+    { name: "United Airlines", careersUrl: "https://careers.united.com" },
+    { name: "Walgreens", careersUrl: "https://jobs.walgreens.com" },
+  ],
+};
+
+// Get known careers URL for a company name
+function getKnownCareersUrl(companyName: string): string | null {
+  const normalized = companyName.toLowerCase().replace(/[^a-z0-9\s]/g, "").trim();
+  
+  // Direct match
+  if (KNOWN_WORKDAY_COMPANIES[normalized]) {
+    return KNOWN_WORKDAY_COMPANIES[normalized];
+  }
+  
+  // Fuzzy match - check if company name contains or is contained by known keys
+  for (const [knownName, knownUrl] of Object.entries(KNOWN_WORKDAY_COMPANIES)) {
+    const normalizedKnown = knownName.toLowerCase().replace(/[^a-z0-9\s]/g, "");
+    if (normalized.includes(normalizedKnown) || normalizedKnown.includes(normalized)) {
+      return knownUrl;
+    }
+  }
+  
+  return null;
+}
+
 // Discover major local companies based on location using AI + web search
 async function discoverLocalCompanies(
   city: string,
@@ -592,16 +640,35 @@ async function discoverLocalCompanies(
 ): Promise<{ name: string; careersUrl: string | null }[]> {
   console.log(`Discovering local companies in ${city}...`);
   
-  // Search for major employers in the area
+  const companiesWithCareers: { name: string; careersUrl: string | null }[] = [];
+  const cityLower = city.toLowerCase();
+  
+  // First, add any hardcoded employers for this city
+  for (const [cityKey, employers] of Object.entries(CITY_MAJOR_EMPLOYERS)) {
+    if (cityLower.includes(cityKey) || cityKey.includes(cityLower.split(",")[0].trim())) {
+      console.log(`Found ${employers.length} hardcoded employers for ${cityKey}`);
+      for (const employer of employers) {
+        companiesWithCareers.push({ name: employer.name, careersUrl: employer.careersUrl });
+        console.log(`Added hardcoded: ${employer.name} -> ${employer.careersUrl}`);
+      }
+    }
+  }
+  
+  // If we already have hardcoded companies, we can return early or continue with discovery
+  if (companiesWithCareers.length >= 4) {
+    console.log(`Using ${companiesWithCareers.length} hardcoded companies for ${city}`);
+    return companiesWithCareers;
+  }
+  
+  // Search for additional major employers in the area
   const searchQueries = [
     `"${city}" major employers headquarters companies`,
     `top companies to work for in ${city}`,
-    `largest employers "${city}" hiring`
   ];
   
   const companyMentions: string[] = [];
   
-  for (const query of searchQueries.slice(0, 2)) { // Limit to 2 queries
+  for (const query of searchQueries) {
     try {
       const results = await serpApiSearch(query, serpApiKey, 5);
       for (const result of results) {
@@ -614,8 +681,8 @@ async function discoverLocalCompanies(
   }
   
   if (companyMentions.length === 0) {
-    console.log("No company mentions found");
-    return [];
+    console.log("No additional company mentions found via search");
+    return companiesWithCareers;
   }
   
   // Use AI to extract company names from the search results
@@ -655,7 +722,7 @@ Return 5-10 company names. Example: ["AllianceBernstein", "Nissan", "HCA Healthc
 
     if (!response.ok) {
       console.error("AI API error for company extraction:", response.status);
-      return [];
+      return companiesWithCareers;
     }
 
     const data = await response.json();
@@ -663,94 +730,73 @@ Return 5-10 company names. Example: ["AllianceBernstein", "Nissan", "HCA Healthc
     const jsonMatch = content.match(/\[[\s\S]*?\]/);
     
     if (!jsonMatch) {
-      console.log("Could not parse company list");
-      return [];
+      console.log("Could not parse company list from AI");
+      return companiesWithCareers;
     }
 
     const companies = JSON.parse(jsonMatch[0]) as string[];
-    console.log(`Discovered ${companies.length} local companies: ${companies.join(", ")}`);
+    console.log(`AI discovered ${companies.length} companies: ${companies.join(", ")}`);
     
-    // Now find career pages for each company
-    const companiesWithCareers: { name: string; careersUrl: string | null }[] = [];
+    // Check existing company names to avoid duplicates
+    const existingNames = new Set(companiesWithCareers.map(c => c.name.toLowerCase()));
     
-    for (const company of companies.slice(0, 8)) { // Increased to 8 companies
-      // First check if we have a known URL for this company
-      const companyLower = company.toLowerCase();
-      let careersUrl: string | null = null;
+    // Find career pages for discovered companies
+    for (const company of companies.slice(0, 6)) {
+      if (existingNames.has(company.toLowerCase())) continue;
       
-      // Check known Workday URLs
-      for (const [knownName, knownUrl] of Object.entries(KNOWN_WORKDAY_COMPANIES)) {
-        if (companyLower.includes(knownName) || knownName.includes(companyLower)) {
-          careersUrl = knownUrl;
-          console.log(`Found known careers URL for ${company}: ${careersUrl}`);
-          break;
-        }
+      // First check if we have a known URL
+      const knownUrl = getKnownCareersUrl(company);
+      if (knownUrl) {
+        companiesWithCareers.push({ name: company, careersUrl: knownUrl });
+        console.log(`${company}: matched known URL -> ${knownUrl}`);
+        continue;
       }
       
-      // If not found in known list, search for it
-      if (!careersUrl) {
-        try {
-          // Specifically search for Workday and other ATS platforms
-          const careerResults = await serpApiSearch(
-            `"${company}" careers site:myworkdayjobs.com OR site:greenhouse.io OR site:lever.co OR "${company}" careers apply jobs`,
-            serpApiKey,
-            5
-          );
+      // Search for career page
+      try {
+        const careerResults = await serpApiSearch(
+          `"${company}" careers site:myworkdayjobs.com OR site:greenhouse.io OR site:lever.co OR "${company}" careers apply`,
+          serpApiKey,
+          5
+        );
+        
+        let careersUrl: string | null = null;
+        for (const result of careerResults) {
+          const urlLower = result.url.toLowerCase();
           
-          // Prioritize actual ATS/careers URLs, not aggregators
-          for (const result of careerResults) {
-            const urlLower = result.url.toLowerCase();
-            
-            // Skip aggregators - these are NOT direct career pages
-            if (
-              urlLower.includes("glassdoor") ||
-              urlLower.includes("indeed") ||
-              urlLower.includes("linkedin") ||
-              urlLower.includes("ziprecruiter") ||
-              urlLower.includes("monster")
-            ) {
-              continue;
-            }
-            
-            // Prioritize Workday URLs
-            if (urlLower.includes("myworkdayjobs.com")) {
-              careersUrl = result.url;
-              break;
-            }
-            
-            // Check for other ATS or careers pages
-            if (
-              urlLower.includes("/careers") ||
-              urlLower.includes("/jobs") ||
-              urlLower.includes("greenhouse") ||
-              urlLower.includes("lever") ||
-              urlLower.includes("icims") ||
-              urlLower.includes("applicantpro")
-            ) {
-              careersUrl = result.url;
-              break;
-            }
+          // Skip aggregators
+          if (["glassdoor", "indeed", "linkedin", "ziprecruiter", "monster"].some(agg => urlLower.includes(agg))) {
+            continue;
           }
           
-          await new Promise(resolve => setTimeout(resolve, 300));
-        } catch (err) {
-          console.error(`Career search failed for ${company}: ${err}`);
+          // Accept Workday, Greenhouse, Lever, or /careers pages
+          if (
+            urlLower.includes("myworkdayjobs.com") ||
+            urlLower.includes("greenhouse") ||
+            urlLower.includes("lever") ||
+            urlLower.includes("/careers") ||
+            urlLower.includes("/jobs")
+          ) {
+            careersUrl = result.url;
+            break;
+          }
         }
-      }
-      
-      // Only add if we found a valid (non-aggregator) careers URL
-      if (careersUrl) {
-        companiesWithCareers.push({ name: company, careersUrl });
-        console.log(`${company}: ${careersUrl}`);
-      } else {
-        console.log(`${company}: no direct careers page found (skipping)`);
+        
+        if (careersUrl) {
+          companiesWithCareers.push({ name: company, careersUrl });
+          console.log(`${company}: discovered -> ${careersUrl}`);
+        }
+        
+        await new Promise(resolve => setTimeout(resolve, 300));
+      } catch (err) {
+        console.error(`Career search failed for ${company}: ${err}`);
       }
     }
     
     return companiesWithCareers;
   } catch (error) {
     console.error("Company discovery error:", error);
-    return [];
+    return companiesWithCareers;
   }
 }
 
