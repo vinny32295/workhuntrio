@@ -157,6 +157,52 @@ function filterResults(results: SearchResult[]): {
   return { classified, aggregatorUrls };
 }
 
+// Scrape aggregator page using Firecrawl (handles anti-bot protection)
+async function scrapeAggregatorWithFirecrawl(url: string): Promise<string | null> {
+  const firecrawlApiKey = Deno.env.get("FIRECRAWL_API_KEY");
+  
+  if (!firecrawlApiKey) {
+    console.log("Firecrawl API key not configured, falling back to direct fetch");
+    return null;
+  }
+  
+  try {
+    console.log(`Scraping aggregator with Firecrawl: ${url}`);
+    
+    const response = await fetch("https://api.firecrawl.dev/v1/scrape", {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${firecrawlApiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        url,
+        formats: ["html", "links"],
+        onlyMainContent: false,
+        waitFor: 2000, // Wait for dynamic content to load
+      }),
+    });
+    
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error(`Firecrawl error for ${url}: ${response.status} - ${errorText}`);
+      return null;
+    }
+    
+    const data = await response.json();
+    
+    if (data.success && data.data?.html) {
+      console.log(`Firecrawl successfully scraped ${url}`);
+      return data.data.html;
+    }
+    
+    return null;
+  } catch (error) {
+    console.error(`Firecrawl error for ${url}:`, error);
+    return null;
+  }
+}
+
 // Extract direct company job links from aggregator pages
 async function extractDirectLinksFromAggregator(
   html: string,
@@ -176,13 +222,14 @@ Look for:
 - "Apply directly" or "Apply at employer" links  
 - Links to company career pages (greenhouse, lever, workable, company websites with /careers/)
 - External links that leave the aggregator domain
+- href attributes in <a> tags that point to external domains
 
 DO NOT include:
 - Links that stay on ${new URL(pageUrl).hostname}
 - "Easy Apply" or "Quick Apply" on the aggregator
 - Links to other aggregators (indeed, glassdoor, linkedin, etc.)
 
-Return ONLY a JSON array of absolute URLs to direct company job postings. Maximum 10 URLs.
+Return ONLY a JSON array of absolute URLs to direct company job postings. Maximum 15 URLs.
 If no direct company links found, return [].
 
 HTML (truncated):
@@ -934,13 +981,22 @@ Deno.serve(async (req) => {
       const aggregatorResults = await Promise.all(
         aggregatorsToProcess.map(async (aggUrl: string) => {
           console.log(`Extracting direct links from aggregator: ${aggUrl}`);
-          const html = await fetchPageContent(aggUrl, 5000);
+          
+          // Try Firecrawl first (handles anti-bot), fall back to direct fetch
+          let html = await scrapeAggregatorWithFirecrawl(aggUrl);
+          
+          if (!html) {
+            console.log(`Firecrawl failed for ${aggUrl}, trying direct fetch...`);
+            html = await fetchPageContent(aggUrl, 5000);
+          }
           
           if (html) {
             const directLinks = await extractDirectLinksFromAggregator(html, aggUrl, lovableApiKey);
             console.log(`Found ${directLinks.length} direct company links from ${aggUrl}`);
             return directLinks;
           }
+          
+          console.log(`Could not scrape ${aggUrl}`);
           return [];
         })
       );
