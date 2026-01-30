@@ -828,8 +828,55 @@ async function searchWorkdayCareerPage(
   }
   
   // Try Firecrawl first - scrape the Workday page with search query
+  // Use all target roles (up to 4) to maximize job capture
   if (firecrawlApiKey && apiKey) {
-    for (const role of targetRoles.slice(0, 2)) {
+    // First, try WITHOUT search query to get all available jobs
+    try {
+      console.log(`Firecrawl scraping Workday (all jobs): ${baseUrl}`);
+      
+      const allJobsResponse = await fetch("https://api.firecrawl.dev/v1/scrape", {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${firecrawlApiKey}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          url: baseUrl,
+          formats: ["html", "links"],
+          onlyMainContent: false,
+          waitFor: 5000, // Wait longer for Workday to fully render job list
+        }),
+      });
+      
+      if (allJobsResponse.ok) {
+        const data = await allJobsResponse.json();
+        if (data.success && data.data?.html) {
+          console.log(`Firecrawl got Workday HTML for ${companyName} (all jobs view)`);
+          
+          // Extract ALL job listings from the main page
+          const extractedJobs = await extractWorkdayJobsFromHtml(
+            data.data.html,
+            baseUrl,
+            companyName,
+            "", // No specific role filter
+            apiKey
+          );
+          
+          for (const job of extractedJobs) {
+            if (!jobs.some(j => j.url === job.url)) {
+              jobs.push(job);
+            }
+          }
+          
+          console.log(`Extracted ${extractedJobs.length} total jobs from Workday main page`);
+        }
+      }
+    } catch (err) {
+      console.error(`Firecrawl Workday error for ${companyName}:`, err);
+    }
+    
+    // Then search for specific roles to catch any that were hidden
+    for (const role of targetRoles.slice(0, 4)) {
       try {
         // Build URL with search query
         const searchUrl = `${baseUrl}?q=${encodeURIComponent(role)}`;
@@ -845,7 +892,7 @@ async function searchWorkdayCareerPage(
             url: searchUrl,
             formats: ["html", "links"],
             onlyMainContent: false,
-            waitFor: 3000, // Workday needs time to render
+            waitFor: 4000, // Workday needs time to render
           }),
         });
         
@@ -870,13 +917,13 @@ async function searchWorkdayCareerPage(
               }
             }
             
-            console.log(`Extracted ${extractedJobs.length} jobs from Workday for ${role}`);
+            console.log(`Extracted ${extractedJobs.length} new jobs from Workday for ${role}, total: ${jobs.length}`);
           }
         } else {
           console.error(`Firecrawl error for Workday: ${response.status}`);
         }
         
-        await new Promise(resolve => setTimeout(resolve, 500));
+        await new Promise(resolve => setTimeout(resolve, 300));
       } catch (err) {
         console.error(`Firecrawl Workday error for ${companyName}/${role}:`, err);
       }
@@ -942,28 +989,32 @@ async function extractWorkdayJobsFromHtml(
   targetRole: string,
   apiKey: string
 ): Promise<ClassifiedJob[]> {
-  const truncatedHtml = html.substring(0, 80000); // Workday pages can be large
+  const truncatedHtml = html.substring(0, 120000); // Workday pages can be large - increased limit
   
   const prompt = `This is HTML from a Workday career page for ${companyName}.
 Base URL: ${baseUrl}
-Target role: ${targetRole}
+${targetRole ? `Target role: ${targetRole}` : "Extracting ALL available jobs"}
 
 Extract ALL job listings visible on this page. Look for:
-1. Job title elements (usually in links or headings)
+1. Job title elements (usually in links or headings within job cards/rows)
 2. Job URLs - they typically contain "/job/" followed by the job title and ID
-3. The job list section (usually contains multiple job cards/rows)
+3. The job list section (data-automation-id="jobResults" or similar)
+4. Look in <a> tags with href containing "/job/" 
+5. Look for repeated list items or div structures containing job info
 
 For Workday URLs, the pattern is usually:
 ${baseUrl}/job/Job-Title/JOB_REQ_ID
 
-Return a JSON array with ALL jobs found (up to 30):
+Return a JSON array with ALL jobs found (up to 50):
 [{"url": "full_job_url", "title": "Job Title", "snippet": "location or brief info"}]
 
 IMPORTANT:
-- Extract ALL jobs, not just ones matching "${targetRole}" - we'll filter later
+- Extract EVERY job listing you can find, not just ones matching a specific role
+- Include ALL job cards/rows in the results section
 - Make sure URLs are absolute (start with https://)
 - If a URL is relative like "/job/...", prepend the base URL
 - Include the job location in the snippet if visible
+- Don't skip any jobs - we need the complete list
 
 HTML (truncated):
 ${truncatedHtml}`;
@@ -1847,7 +1898,9 @@ Deno.serve(async (req) => {
       const companiesWithCareers = localCompanies.filter(c => c.careersUrl);
       localCompaniesSearchedCount = companiesWithCareers.length;
       
-      for (const company of companiesWithCareers.slice(0, 4)) { // Limit to 4 companies
+      // Scale company searches based on tier (more companies = more jobs)
+      const maxCompaniesToSearch = tier === "premium" ? 8 : tier === "pro" ? 5 : 3;
+      for (const company of companiesWithCareers.slice(0, maxCompaniesToSearch)) {
         if (!company.careersUrl) continue;
         
         try {
@@ -1876,8 +1929,9 @@ Deno.serve(async (req) => {
       console.log(`Total jobs from local companies: ${localCompanyJobs.length}`);
     }
     
-    // Process board pages in parallel (limit to 3 for speed)
-    const boardPagesToProcess = boardPages.slice(0, 3);
+    // Process board pages in parallel (scale based on tier)
+    const maxBoardPages = tier === "premium" ? 6 : tier === "pro" ? 4 : 2;
+    const boardPagesToProcess = boardPages.slice(0, maxBoardPages);
     const extractedJobUrls: string[] = [];
     
     const boardResults = await Promise.all(
@@ -1896,8 +1950,9 @@ Deno.serve(async (req) => {
     
     boardResults.forEach((links: string[]) => extractedJobUrls.push(...links));
     
-    // Process aggregator pages to extract direct company links (limit to 3 for speed)
-    const aggregatorsToProcess = aggregatorUrls.slice(0, 3);
+    // Process aggregator pages to extract direct company links (scale based on tier)
+    const maxAggregators = tier === "premium" ? 5 : tier === "pro" ? 3 : 2;
+    const aggregatorsToProcess = aggregatorUrls.slice(0, maxAggregators);
     const directLinksFromAggregators: string[] = [];
     
     if (aggregatorsToProcess.length > 0) {
