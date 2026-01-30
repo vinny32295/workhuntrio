@@ -2286,39 +2286,19 @@ Deno.serve(async (req) => {
                 const companyName = companyMatch ? companyMatch[1] : "Company";
                 jobs = await searchCompanyCareerPage(companyName, url, targetRoles, lovableApiKey, serpApiKey);
               } else if (urlLower.includes("amazon.jobs")) {
-                // Amazon.jobs - try JSON API first (more reliable), fallback to HTML scraping
-                console.log(`[BG] Processing Amazon.jobs URL: ${url}`);
+                // Use the JSON API first (most reliable)
+                jobs = await fetchAmazonJobsViaApi(url, 50);
                 
-                // First try the JSON API (much more reliable than HTML scraping)
-                jobs = await fetchAmazonJobsViaApi(url, 100);
-                console.log(`[BG] Amazon JSON API returned ${jobs.length} jobs`);
-                
-                // If API failed or returned no results, fallback to HTML scraping
+                // If API fails, fall back to Firecrawl HTML scraping
                 if (jobs.length === 0) {
-                  console.log(`[BG] Amazon API returned 0 jobs, falling back to HTML scraping...`);
-                  
-                  // IMPORTANT: Override result_limit to get more results
-                  let amazonUrl = url;
-                  if (amazonUrl.includes("result_limit=")) {
-                    amazonUrl = amazonUrl.replace(/result_limit=\d+/, "result_limit=100");
-                  } else {
-                    amazonUrl += (amazonUrl.includes("?") ? "&" : "?") + "result_limit=100";
-                  }
-                  
-                  // Try Firecrawl with scroll actions for the SPA
-                  const html = await scrapeAggregatorWithFirecrawl(amazonUrl, true);
+                  console.log(`[BG] Amazon API returned 0 jobs, falling back to HTML scraping`);
+                  const html = await scrapeAggregatorWithFirecrawl(url, true);
                   if (html) {
                     jobs = await extractAmazonJobsFromHtml(html, url, lovableApiKey);
-                    console.log(`[BG] Firecrawl HTML scraping extracted ${jobs.length} jobs`);
-                  } else {
-                    // Final fallback: direct fetch
-                    const fetchResult = await fetchPageContent(url, 5000);
-                    if (fetchResult.html && !fetchResult.is404) {
-                      jobs = await extractAmazonJobsFromHtml(fetchResult.html, url, lovableApiKey);
-                      console.log(`[BG] Direct fetch extracted ${jobs.length} jobs`);
-                    }
                   }
                 }
+                
+                console.log(`[BG] Total Amazon jobs found: ${jobs.length}`);
               } else {
                 // Generic career page - scrape for job links
                 const fetchResult = await fetchPageContent(url, 5000);
