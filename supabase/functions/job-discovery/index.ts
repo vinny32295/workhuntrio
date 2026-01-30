@@ -1365,16 +1365,42 @@ async function fetchPageContent(url: string, timeoutMs: number = 5000): Promise<
   }
 }
 
+// Clean Amazon.jobs URL to remove duplicate parameters
+function cleanAmazonUrl(url: string): string {
+  try {
+    const parsed = new URL(url);
+    const params = new URLSearchParams();
+    const seen = new Set<string>();
+    
+    // Iterate through all parameters and dedupe
+    for (const [key, value] of parsed.searchParams.entries()) {
+      const normalizedKey = decodeURIComponent(key);
+      if (!seen.has(normalizedKey) || normalizedKey.endsWith("[]")) {
+        params.append(normalizedKey, value);
+        if (!normalizedKey.endsWith("[]")) {
+          seen.add(normalizedKey);
+        }
+      }
+    }
+    
+    return `${parsed.origin}${parsed.pathname}?${params.toString()}`;
+  } catch {
+    return url;
+  }
+}
+
 // NEW: Fetch Amazon jobs using their JSON API (much more reliable than HTML scraping)
 async function fetchAmazonJobsViaApi(
   userUrl: string,
   maxResults: number = 50
 ): Promise<ClassifiedJob[]> {
-  console.log(`Fetching Amazon jobs via JSON API from: ${userUrl}`);
+  // Clean the URL first to remove duplicate parameters
+  const cleanedUrl = cleanAmazonUrl(userUrl);
+  console.log(`Fetching Amazon jobs via JSON API from: ${cleanedUrl}`);
   
   try {
-    // Parse the user's URL to extract search parameters
-    const url = new URL(userUrl);
+    // Parse the cleaned URL to extract search parameters
+    const url = new URL(cleanedUrl);
     const params = new URLSearchParams(url.search);
     
     // Build the JSON API URL
