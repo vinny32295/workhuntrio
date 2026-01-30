@@ -1922,6 +1922,56 @@ Deno.serve(async (req) => {
                 const companyMatch = url.match(/https?:\/\/(\w+)\.wd\d+\.myworkdayjobs\.com/);
                 const companyName = companyMatch ? companyMatch[1] : "Company";
                 jobs = await searchCompanyCareerPage(companyName, url, targetRoles, lovableApiKey, serpApiKey);
+              } else if (urlLower.includes("amazon.jobs")) {
+                // Amazon.jobs is a JavaScript SPA - use Firecrawl to render it
+                console.log(`[BG] Using Firecrawl for Amazon.jobs: ${url}`);
+                const html = await scrapeAggregatorWithFirecrawl(url);
+                if (html) {
+                  const jobLinks = await extractJobLinksFromPage(html, url, lovableApiKey);
+                  console.log(`[BG] Firecrawl extracted ${jobLinks.length} job links from Amazon.jobs`);
+                  for (const jobUrl of jobLinks) {
+                    if (!seenUrls.has(jobUrl)) {
+                      seenUrls.add(jobUrl);
+                      jobs.push({
+                        url: jobUrl,
+                        title: "",
+                        snippet: "",
+                        atsType: "amazon",
+                        companySlug: "amazon",
+                        salaryMin: null,
+                        salaryMax: null,
+                        salaryCurrency: null,
+                        fullDescription: null,
+                        requirements: null,
+                        isDirectPosting: true,
+                      });
+                    }
+                  }
+                } else {
+                  console.log(`[BG] Firecrawl failed for Amazon.jobs, trying direct fetch...`);
+                  const fetchResult = await fetchPageContent(url, 5000);
+                  if (fetchResult.html && !fetchResult.is404) {
+                    const jobLinks = await extractJobLinksFromPage(fetchResult.html, url, lovableApiKey);
+                    for (const jobUrl of jobLinks) {
+                      if (!seenUrls.has(jobUrl)) {
+                        seenUrls.add(jobUrl);
+                        jobs.push({
+                          url: jobUrl,
+                          title: "",
+                          snippet: "",
+                          atsType: "amazon",
+                          companySlug: "amazon",
+                          salaryMin: null,
+                          salaryMax: null,
+                          salaryCurrency: null,
+                          fullDescription: null,
+                          requirements: null,
+                          isDirectPosting: true,
+                        });
+                      }
+                    }
+                  }
+                }
               } else {
                 // Generic career page - scrape for job links
                 const fetchResult = await fetchPageContent(url, 5000);
@@ -1949,12 +1999,8 @@ Deno.serve(async (req) => {
                 }
               }
               
-              for (const job of jobs) {
-                if (!seenUrls.has(job.url)) {
-                  seenUrls.add(job.url);
-                  targetUrlJobs.push(job);
-                }
-              }
+              // Add all jobs to targetUrlJobs (they're already deduped within the extraction)
+              targetUrlJobs.push(...jobs);
               
               console.log(`[BG] Found ${jobs.length} jobs from target URL: ${url}`);
             } catch (err) {
