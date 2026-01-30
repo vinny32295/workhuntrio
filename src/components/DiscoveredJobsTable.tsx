@@ -87,7 +87,7 @@ export default function DiscoveredJobsTable({ userId }: DiscoveredJobsTableProps
   const [titleSearch, setTitleSearch] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
   const [dateFilter, setDateFilter] = useState<DateFilter>("all");
-  const [sortOrder, setSortOrder] = useState<SortOrder>("newest");
+  const [sortOrder, setSortOrder] = useState<SortOrder>("match"); // Default to best match to prioritize local jobs
   const [tailorDialogOpen, setTailorDialogOpen] = useState(false);
   const [selectedJob, setSelectedJob] = useState<DiscoveredJob | null>(null);
   const [userTier, setUserTier] = useState<string>("free");
