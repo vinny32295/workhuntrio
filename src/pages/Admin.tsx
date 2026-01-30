@@ -12,6 +12,13 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Crosshair, Users, Crown, FileText, RefreshCw, ArrowLeft, Loader2, ShieldCheck } from "lucide-react";
 import { toast } from "sonner";
 import type { User as SupabaseUser } from "@supabase/supabase-js";
@@ -52,6 +59,7 @@ const Admin = () => {
   const [stats, setStats] = useState<AdminStats | null>(null);
   const [isAdmin, setIsAdmin] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
+  const [updatingTier, setUpdatingTier] = useState<string | null>(null);
   const navigate = useNavigate();
 
   const fetchAdminStats = async () => {
@@ -112,6 +120,56 @@ const Admin = () => {
 
     return () => subscription.unsubscribe();
   }, [navigate]);
+
+  const handleTierChange = async (targetUserId: string, newTier: string) => {
+    setUpdatingTier(targetUserId);
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) {
+        toast.error("Session expired");
+        return;
+      }
+
+      const { data, error } = await supabase.functions.invoke("admin-update-tier", {
+        headers: {
+          Authorization: `Bearer ${session.access_token}`,
+        },
+        body: { targetUserId, newTier },
+      });
+
+      if (error) throw error;
+
+      toast.success(`Tier updated to ${newTier}`);
+      
+      // Update local state
+      if (stats) {
+        setStats({
+          ...stats,
+          users: stats.users.map((u) =>
+            u.user_id === targetUserId
+              ? { ...u, subscription: { ...u.subscription, tier: newTier } }
+              : u
+          ),
+          summary: {
+            ...stats.summary,
+            tierCounts: Object.fromEntries(
+              Object.entries(stats.summary.tierCounts).map(([tier, count]) => {
+                const oldTier = stats.users.find((u) => u.user_id === targetUserId)?.subscription.tier;
+                if (tier === oldTier) return [tier, count - 1];
+                if (tier === newTier) return [tier, count + 1];
+                return [tier, count];
+              })
+            ),
+          },
+        });
+      }
+    } catch (error) {
+      console.error("Error updating tier:", error);
+      toast.error("Failed to update tier");
+    } finally {
+      setUpdatingTier(null);
+    }
+  };
 
   const getTierBadge = (tier: string) => {
     switch (tier) {
@@ -293,7 +351,32 @@ const Admin = () => {
                           </div>
                         </TableCell>
                         <TableCell>{formatDate(userData.created_at)}</TableCell>
-                        <TableCell>{getTierBadge(userData.subscription.tier)}</TableCell>
+                        <TableCell>
+                          <Select
+                            value={userData.subscription.tier}
+                            onValueChange={(value) => handleTierChange(userData.user_id, value)}
+                            disabled={updatingTier === userData.user_id}
+                          >
+                            <SelectTrigger className="w-[120px]">
+                              {updatingTier === userData.user_id ? (
+                                <Loader2 className="h-4 w-4 animate-spin" />
+                              ) : (
+                                <SelectValue />
+                              )}
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="free">
+                                <Badge variant="outline">Free</Badge>
+                              </SelectItem>
+                              <SelectItem value="pro">
+                                <Badge className="bg-gradient-to-r from-primary to-cyan-500 text-white border-0">Pro</Badge>
+                              </SelectItem>
+                              <SelectItem value="premium">
+                                <Badge className="bg-gradient-to-r from-amber-500 to-orange-500 text-white border-0">Premium</Badge>
+                              </SelectItem>
+                            </SelectContent>
+                          </Select>
+                        </TableCell>
                         <TableCell>
                           {userData.resume_url ? (
                             <Badge variant="outline" className="bg-green-500/10 text-green-500 border-green-500/30">
