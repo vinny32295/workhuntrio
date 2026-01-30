@@ -3,9 +3,6 @@ project_id = "ejnqypkykyuguovunrsi"
 [functions.job-discovery]
 verify_jwt = false
 
-[functions.score-jobs]
-verify_jwt = false
-
 [functions.extract-salaries]
 verify_jwt = false
 
