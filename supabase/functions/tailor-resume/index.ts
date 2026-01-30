@@ -80,15 +80,24 @@ serve(async (req) => {
       });
     }
 
-    // Get user's profile with resume URL and contact info
+    // Get user's profile with resume URL, contact info, and structured work history
     const { data: profile, error: profileError } = await supabase
       .from("profiles")
-      .select("resume_url, full_name, email, phone_number, target_roles")
+      .select("resume_url, full_name, email, phone_number, target_roles, work_history, education, skills")
       .eq("user_id", user.id)
       .single();
 
-    if (profileError || !profile?.resume_url) {
-      return new Response(JSON.stringify({ error: "Please upload your resume first" }), {
+    if (profileError) {
+      return new Response(JSON.stringify({ error: "Could not load profile" }), {
+        status: 400,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+    
+    // Check if user has structured work history or resume
+    const hasWorkHistory = profile.work_history && Array.isArray(profile.work_history) && profile.work_history.length > 0;
+    if (!hasWorkHistory && !profile.resume_url) {
+      return new Response(JSON.stringify({ error: "Please upload your resume or add work history first" }), {
         status: 400,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
@@ -134,6 +143,61 @@ serve(async (req) => {
       profile.email || "your.email@example.com",
       profile.phone_number || "(XXX) XXX-XXXX",
     ].filter(Boolean).join(" | ");
+    
+    // Format structured work history for the AI prompt
+    interface WorkExperience {
+      id: string;
+      company: string;
+      title: string;
+      startDate: string;
+      endDate: string;
+      description: string;
+    }
+    
+    let structuredWorkHistory = "";
+    if (hasWorkHistory) {
+      const workHistory = profile.work_history as WorkExperience[];
+      structuredWorkHistory = workHistory.map((job, index) => {
+        const bullets = job.description
+          ?.split(/[\n•]/)
+          .map(b => b.trim())
+          .filter(b => b.length > 0)
+          .map(b => `  - ${b}`)
+          .join('\n') || '  - [No bullet points provided]';
+        
+        return `
+Job ${index + 1}:
+- Title: ${job.title}
+- Company: ${job.company}
+- Start Date: ${job.startDate}
+- End Date: ${job.endDate}
+- Current Bullet Points:
+${bullets}`;
+      }).join('\n');
+    }
+    
+    // Format education
+    interface Education {
+      id: string;
+      institution: string;
+      degree: string;
+      field: string;
+      startDate: string;
+      endDate: string;
+    }
+    
+    let structuredEducation = "";
+    if (profile.education && Array.isArray(profile.education) && profile.education.length > 0) {
+      const education = profile.education as Education[];
+      structuredEducation = education.map(edu => 
+        `- ${edu.degree}${edu.field ? ` in ${edu.field}` : ''} from ${edu.institution} (${edu.startDate} - ${edu.endDate})`
+      ).join('\n');
+    }
+    
+    // Format skills
+    const skillsList = profile.skills && Array.isArray(profile.skills) 
+      ? profile.skills.join(', ') 
+      : '';
 
     const systemPrompt = `You are an expert career coach and professional resume writer. Your task is to create a COMPLETE, PROPERLY FORMATTED resume and cover letter tailored to a specific job opportunity.
 
@@ -231,15 +295,30 @@ ${profile.phone_number || "[Your Phone]"}
 - Email: ${profile.email || "Not provided - use placeholder"}
 - Phone: ${profile.phone_number || "Not provided - use placeholder"}
 
-**CANDIDATE'S CURRENT RESUME CONTENT:**
-${resumeText || "Resume content not available - create a template based on target roles: " + (profile.target_roles?.join(", ") || "General professional")}
+${structuredWorkHistory ? `**CANDIDATE'S WORK HISTORY (USE THESE EXACT COMPANY NAMES AND JOB TITLES):**
+${structuredWorkHistory}
+
+CRITICAL: You MUST use the EXACT company names and job titles listed above. Only rewrite the bullet points to better match the job requirements.
+` : ''}
+
+${structuredEducation ? `**CANDIDATE'S EDUCATION:**
+${structuredEducation}
+` : ''}
+
+${skillsList ? `**CANDIDATE'S CURRENT SKILLS:**
+${skillsList}
+` : ''}
+
+${resumeText ? `**ADDITIONAL RESUME CONTENT:**
+${resumeText}
+` : ''}
 
 ---
 
 IMPORTANT: 
-1. Create a COMPLETE resume with all sections filled in based on the candidate's resume content
-2. If resume content is limited, create a professional template they can customize
-3. Tailor ALL content to match the job description keywords and requirements
+1. Use the EXACT company names, job titles, and dates from the structured work history above - DO NOT change or anonymize them
+2. ONLY rewrite the bullet points to better match the job description keywords and requirements
+3. Tailor the professional summary and skills to match the job requirements
 4. The cover letter should reference specific job requirements and company details
 5. Use the exact contact information provided for the candidate`;
 
