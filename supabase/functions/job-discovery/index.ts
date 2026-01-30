@@ -1879,203 +1879,213 @@ Deno.serve(async (req) => {
     
     console.log(`Direct postings: ${directPostings.length}, Board pages: ${boardPages.length}, Aggregators: ${aggregatorUrls.length}`);
     
-    // NEW: Discover local companies based on zipcode and search their career pages
-    const cities = getCitiesFromZip(profile?.location_zip);
-    const primaryCity = cities[0];
-    const targetRoles = profile?.target_roles || [];
-    const workTypes = profile?.work_type || [];
-    const hasLocalJobs = workTypes.includes("in-person") || workTypes.includes("hybrid");
-    let localCompanyJobs: ClassifiedJob[] = [];
-    let localCompaniesSearchedCount = 0;
-    
-    if (primaryCity && targetRoles.length > 0 && hasLocalJobs) {
-      console.log(`Discovering local companies in ${primaryCity} for roles: ${targetRoles.join(", ")}`);
-      
-      const localCompanies = await discoverLocalCompanies(primaryCity, serpApiKey, lovableApiKey);
-      console.log(`Found ${localCompanies.length} local companies with potential career pages`);
-      
-      // Search each company's career page for matching jobs
-      const companiesWithCareers = localCompanies.filter(c => c.careersUrl);
-      localCompaniesSearchedCount = companiesWithCareers.length;
-      
-      // Scale company searches based on tier (more companies = more jobs)
-      const maxCompaniesToSearch = tier === "premium" ? 8 : tier === "pro" ? 5 : 3;
-      for (const company of companiesWithCareers.slice(0, maxCompaniesToSearch)) {
-        if (!company.careersUrl) continue;
+    // Move ALL heavy processing to background to avoid timeout
+    // Return response immediately with preliminary data
+    const backgroundTask = async () => {
+      try {
+        // Discover local companies based on zipcode and search their career pages
+        const cities = getCitiesFromZip(profile?.location_zip);
+        const primaryCity = cities[0];
+        const targetRoles = profile?.target_roles || [];
+        const workTypes = profile?.work_type || [];
+        const hasLocalJobs = workTypes.includes("in-person") || workTypes.includes("hybrid");
+        let localCompanyJobs: ClassifiedJob[] = [];
+        let localCompaniesSearchedCount = 0;
         
-        try {
-          const jobs = await searchCompanyCareerPage(
-            company.name,
-            company.careersUrl,
-            targetRoles,
-            lovableApiKey,
-            serpApiKey
-          );
+        if (primaryCity && targetRoles.length > 0 && hasLocalJobs) {
+          console.log(`[BG] Discovering local companies in ${primaryCity} for roles: ${targetRoles.join(", ")}`);
           
-          // Add jobs that aren't already in our list
-          for (const job of jobs) {
-            if (!seenUrls.has(job.url)) {
-              seenUrls.add(job.url);
-              localCompanyJobs.push(job);
+          const localCompanies = await discoverLocalCompanies(primaryCity, serpApiKey, lovableApiKey);
+          console.log(`[BG] Found ${localCompanies.length} local companies with potential career pages`);
+          
+          // Search each company's career page for matching jobs
+          const companiesWithCareers = localCompanies.filter(c => c.careersUrl);
+          localCompaniesSearchedCount = companiesWithCareers.length;
+          
+          // Scale company searches based on tier (more companies = more jobs)
+          const maxCompaniesToSearch = tier === "premium" ? 8 : tier === "pro" ? 5 : 3;
+          for (const company of companiesWithCareers.slice(0, maxCompaniesToSearch)) {
+            if (!company.careersUrl) continue;
+            
+            try {
+              const jobs = await searchCompanyCareerPage(
+                company.name,
+                company.careersUrl,
+                targetRoles,
+                lovableApiKey,
+                serpApiKey
+              );
+              
+              // Add jobs that aren't already in our list
+              for (const job of jobs) {
+                if (!seenUrls.has(job.url)) {
+                  seenUrls.add(job.url);
+                  localCompanyJobs.push(job);
+                }
+              }
+              
+              console.log(`[BG] Added ${jobs.length} jobs from ${company.name}`);
+            } catch (err) {
+              console.error(`[BG] Error searching ${company.name} careers:`, err);
             }
           }
           
-          console.log(`Added ${jobs.length} jobs from ${company.name}`);
-        } catch (err) {
-          console.error(`Error searching ${company.name} careers:`, err);
+          console.log(`[BG] Total jobs from local companies: ${localCompanyJobs.length}`);
         }
-      }
-      
-      console.log(`Total jobs from local companies: ${localCompanyJobs.length}`);
-    }
-    
-    // Process board pages in parallel (scale based on tier)
-    const maxBoardPages = tier === "premium" ? 6 : tier === "pro" ? 4 : 2;
-    const boardPagesToProcess = boardPages.slice(0, maxBoardPages);
-    const extractedJobUrls: string[] = [];
-    
-    const boardResults = await Promise.all(
-      boardPagesToProcess.map(async (boardPage: ClassifiedJob) => {
-        console.log(`Fetching board page: ${boardPage.url}`);
-        const fetchResult = await fetchPageContent(boardPage.url, 4000);
         
-        if (fetchResult.html && !fetchResult.is404) {
-          const jobLinks = await extractJobLinksFromPage(fetchResult.html, boardPage.url, lovableApiKey);
-          console.log(`Extracted ${jobLinks.length} job links from ${boardPage.url}`);
-          return jobLinks;
+        // Process board pages in parallel (scale based on tier)
+        const maxBoardPages = tier === "premium" ? 6 : tier === "pro" ? 4 : 2;
+        const boardPagesToProcess = boardPages.slice(0, maxBoardPages);
+        const extractedJobUrls: string[] = [];
+        
+        console.log(`[BG] Processing ${boardPagesToProcess.length} board pages...`);
+        const boardResults = await Promise.all(
+          boardPagesToProcess.map(async (boardPage: ClassifiedJob) => {
+            console.log(`[BG] Fetching board page: ${boardPage.url}`);
+            const fetchResult = await fetchPageContent(boardPage.url, 4000);
+            
+            if (fetchResult.html && !fetchResult.is404) {
+              const jobLinks = await extractJobLinksFromPage(fetchResult.html, boardPage.url, lovableApiKey);
+              console.log(`[BG] Extracted ${jobLinks.length} job links from ${boardPage.url}`);
+              return jobLinks;
+            }
+            return [];
+          })
+        );
+        
+        boardResults.forEach((links: string[]) => extractedJobUrls.push(...links));
+        
+        // Process aggregator pages to extract direct company links (scale based on tier)
+        const maxAggregators = tier === "premium" ? 5 : tier === "pro" ? 3 : 2;
+        const aggregatorsToProcess = aggregatorUrls.slice(0, maxAggregators);
+        const directLinksFromAggregators: string[] = [];
+        
+        if (aggregatorsToProcess.length > 0) {
+          console.log(`[BG] Processing ${aggregatorsToProcess.length} aggregator pages for direct links...`);
+          
+          const aggregatorResults = await Promise.all(
+            aggregatorsToProcess.map(async (aggUrl: string) => {
+              console.log(`[BG] Extracting direct links from aggregator: ${aggUrl}`);
+              
+              // Try Firecrawl first (handles anti-bot), fall back to direct fetch
+              let html: string | null = await scrapeAggregatorWithFirecrawl(aggUrl);
+              
+              if (!html) {
+                console.log(`[BG] Firecrawl failed for ${aggUrl}, trying direct fetch...`);
+                const fetchResult = await fetchPageContent(aggUrl, 5000);
+                html = fetchResult.is404 ? null : fetchResult.html;
+              }
+              
+              if (html) {
+                const directLinks = await extractDirectLinksFromAggregator(html, aggUrl, lovableApiKey);
+                console.log(`[BG] Found ${directLinks.length} direct company links from ${aggUrl}`);
+                return directLinks;
+              }
+              
+              console.log(`[BG] Could not scrape ${aggUrl}`);
+              return [];
+            })
+          );
+          
+          aggregatorResults.forEach((links: string[]) => directLinksFromAggregators.push(...links));
+          console.log(`[BG] Total direct links from aggregators: ${directLinksFromAggregators.length}`);
         }
-        return [];
-      })
-    );
-    
-    boardResults.forEach((links: string[]) => extractedJobUrls.push(...links));
-    
-    // Process aggregator pages to extract direct company links (scale based on tier)
-    const maxAggregators = tier === "premium" ? 5 : tier === "pro" ? 3 : 2;
-    const aggregatorsToProcess = aggregatorUrls.slice(0, maxAggregators);
-    const directLinksFromAggregators: string[] = [];
-    
-    if (aggregatorsToProcess.length > 0) {
-      console.log(`Processing ${aggregatorsToProcess.length} aggregator pages for direct links...`);
-      
-      const aggregatorResults = await Promise.all(
-        aggregatorsToProcess.map(async (aggUrl: string) => {
-          console.log(`Extracting direct links from aggregator: ${aggUrl}`);
-          
-          // Try Firecrawl first (handles anti-bot), fall back to direct fetch
-          let html: string | null = await scrapeAggregatorWithFirecrawl(aggUrl);
-          
-          if (!html) {
-            console.log(`Firecrawl failed for ${aggUrl}, trying direct fetch...`);
-            const fetchResult = await fetchPageContent(aggUrl, 5000);
-            html = fetchResult.is404 ? null : fetchResult.html;
+        
+        // Build final list of jobs to process
+        const allJobs: ClassifiedJob[] = [...directPostings];
+        
+        // Add extracted URLs from board pages
+        for (const jobUrl of extractedJobUrls) {
+          if (!seenUrls.has(jobUrl) && !isAggregatorUrl(jobUrl)) {
+            seenUrls.add(jobUrl);
+            const { type, companySlug } = classifyUrl(jobUrl);
+            allJobs.push({
+              url: jobUrl,
+              title: "",
+              snippet: "",
+              atsType: type,
+              companySlug,
+              salaryMin: null,
+              salaryMax: null,
+              salaryCurrency: null,
+              fullDescription: null,
+              requirements: null,
+              isDirectPosting: true,
+            });
           }
-          
-          if (html) {
-            const directLinks = await extractDirectLinksFromAggregator(html, aggUrl, lovableApiKey);
-            console.log(`Found ${directLinks.length} direct company links from ${aggUrl}`);
-            return directLinks;
+        }
+        
+        // Add direct links from aggregator pages
+        for (const jobUrl of directLinksFromAggregators) {
+          if (!seenUrls.has(jobUrl)) {
+            seenUrls.add(jobUrl);
+            const { type, companySlug } = classifyUrl(jobUrl);
+            allJobs.push({
+              url: jobUrl,
+              title: "",
+              snippet: "",
+              atsType: type || "careers_page",
+              companySlug,
+              salaryMin: null,
+              salaryMax: null,
+              salaryCurrency: null,
+              fullDescription: null,
+              requirements: null,
+              isDirectPosting: true,
+            });
           }
-          
-          console.log(`Could not scrape ${aggUrl}`);
-          return [];
-        })
-      );
-      
-      aggregatorResults.forEach((links: string[]) => directLinksFromAggregators.push(...links));
-      console.log(`Total direct links from aggregators: ${directLinksFromAggregators.length}`);
-    }
-    
-    // Add extracted URLs to seenUrls set
-    directPostings.forEach((p: ClassifiedJob) => seenUrls.add(p.url));
-    
-    // Add extracted URLs from board pages
-    for (const jobUrl of extractedJobUrls) {
-      if (!seenUrls.has(jobUrl) && !isAggregatorUrl(jobUrl)) {
-        seenUrls.add(jobUrl);
-        const { type, companySlug } = classifyUrl(jobUrl);
-        directPostings.push({
-          url: jobUrl,
-          title: "",
-          snippet: "",
-          atsType: type,
-          companySlug,
-          salaryMin: null,
-          salaryMax: null,
-          salaryCurrency: null,
-          fullDescription: null,
-          requirements: null,
-          isDirectPosting: true,
-        });
+        }
+        
+        // Add jobs from local company career pages
+        for (const job of localCompanyJobs) {
+          if (!seenUrls.has(job.url)) {
+            seenUrls.add(job.url);
+            allJobs.push(job);
+          }
+        }
+        
+        console.log(`[BG] Total jobs after all extraction: ${allJobs.length}`);
+        
+        // Prioritize local company jobs by putting them first
+        const prioritizedPostings = [
+          ...localCompanyJobs.filter(j => !allJobs.slice(0, allJobs.length - localCompanyJobs.length).some(p => p.url === j.url)),
+          ...allJobs.filter(j => !localCompanyJobs.some(lc => lc.url === j.url))
+        ];
+        
+        // Dedupe the prioritized list
+        const finalPostings: ClassifiedJob[] = [];
+        const finalSeenUrls = new Set<string>();
+        for (const job of prioritizedPostings) {
+          if (!finalSeenUrls.has(job.url)) {
+            finalSeenUrls.add(job.url);
+            finalPostings.push(job);
+          }
+        }
+        
+        console.log(`[BG] Prioritized ${localCompanyJobs.length} local company jobs. Final postings: ${finalPostings.length}`);
+        
+        // Process and save jobs
+        await processAndSaveJobs(
+          finalPostings,
+          maxResults,
+          lovableApiKey,
+          userId,
+          {
+            target_roles: profile?.target_roles || null,
+            work_type: profile?.work_type || null,
+            location_zip: profile?.location_zip || null,
+            search_radius_miles: profile?.search_radius_miles || 50,
+          }
+        );
+        
+        console.log(`[BG] Background task complete`);
+      } catch (error) {
+        console.error(`[BG] Background task error:`, error);
       }
-    }
-    
-    // Add direct links from aggregator pages
-    for (const jobUrl of directLinksFromAggregators) {
-      if (!seenUrls.has(jobUrl)) {
-        seenUrls.add(jobUrl);
-        const { type, companySlug } = classifyUrl(jobUrl);
-        directPostings.push({
-          url: jobUrl,
-          title: "",
-          snippet: "",
-          atsType: type || "careers_page",
-          companySlug,
-          salaryMin: null,
-          salaryMax: null,
-          salaryCurrency: null,
-          fullDescription: null,
-          requirements: null,
-          isDirectPosting: true,
-        });
-      }
-    }
-    
-    // Add jobs from local company career pages
-    for (const job of localCompanyJobs) {
-      if (!seenUrls.has(job.url)) {
-        seenUrls.add(job.url);
-        directPostings.push(job);
-      }
-    }
-    
-    console.log(`Total direct postings after all extraction (including local companies): ${directPostings.length}`);
-    
-    // IMPORTANT: Prioritize local company jobs by putting them first in the list
-    // This ensures they get processed before the limit is hit
-    const prioritizedPostings = [
-      ...localCompanyJobs.filter(j => !directPostings.slice(0, directPostings.length - localCompanyJobs.length).some(p => p.url === j.url)),
-      ...directPostings.filter(j => !localCompanyJobs.some(lc => lc.url === j.url))
-    ];
-    
-    // Dedupe the prioritized list
-    const finalPostings: ClassifiedJob[] = [];
-    const finalSeenUrls = new Set<string>();
-    for (const job of prioritizedPostings) {
-      if (!finalSeenUrls.has(job.url)) {
-        finalSeenUrls.add(job.url);
-        finalPostings.push(job);
-      }
-    }
-    
-    console.log(`Prioritized ${localCompanyJobs.length} local company jobs. Final postings: ${finalPostings.length}`);
-    
-    // Use background task for enrichment to avoid timeout
-    const backgroundTask = processAndSaveJobs(
-      finalPostings, // Use prioritized list with local companies first
-      maxResults,
-      lovableApiKey,
-      userId,
-      {
-        target_roles: profile?.target_roles || null,
-        work_type: profile?.work_type || null,
-        location_zip: profile?.location_zip || null,
-        search_radius_miles: profile?.search_radius_miles || 50,
-      }
-    );
+    };
     
     // Register background task to continue after response
-    EdgeRuntime.waitUntil(backgroundTask);
+    EdgeRuntime.waitUntil(backgroundTask());
     
     // Return immediately with preliminary results
     return new Response(
@@ -2083,16 +2093,16 @@ Deno.serve(async (req) => {
         success: true,
         queriesRun: queries.length,
         totalResults: uniqueResults.length,
-        boardPagesScraped: boardPagesToProcess.length,
-        extractedJobLinks: extractedJobUrls.length,
-        localCompaniesSearched: localCompaniesSearchedCount,
-        localCompanyJobs: localCompanyJobs.length,
-        enrichedJobs: Math.min(finalPostings.length, maxResults),
-        inserted: Math.min(finalPostings.length, maxResults),
+        boardPagesScraped: boardPages.length,
+        extractedJobLinks: directPostings.length,
+        localCompaniesSearched: 0, // Will be processed in background
+        localCompanyJobs: 0, // Will be processed in background
+        enrichedJobs: directPostings.length,
+        inserted: directPostings.length,
         skipped: 0,
         withSalary: 0,
         withDescription: 0,
-        note: "Jobs are being enriched in the background. Refresh in a few seconds for full details.",
+        note: "Jobs are being discovered and enriched in the background. Refresh in 10-30 seconds for full results.",
       }),
       { headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
