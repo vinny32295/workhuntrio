@@ -18,9 +18,15 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { ExternalLink, Plus, Check, Loader2, Search, Filter, X, Sparkles } from "lucide-react";
+import { ExternalLink, Plus, Check, Loader2, Search, Filter, X, Sparkles, Lock } from "lucide-react";
 import { toast } from "sonner";
 import TailorResumeDialog from "./TailorResumeDialog";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 
 interface DiscoveredJob {
   id: string;
@@ -384,7 +390,7 @@ export default function DiscoveredJobsTable({ userId }: DiscoveredJobsTableProps
                 </TableCell>
                 <TableCell className="text-right">
                   <div className="flex items-center justify-end gap-1">
-                    {userTier !== "free" && (
+                    {userTier !== "free" ? (
                       <Button
                         variant="ghost"
                         size="sm"
@@ -396,6 +402,27 @@ export default function DiscoveredJobsTable({ userId }: DiscoveredJobsTableProps
                       >
                         <Sparkles className="h-4 w-4 text-primary" />
                       </Button>
+                    ) : (
+                      <TooltipProvider>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="opacity-50 cursor-not-allowed"
+                              onClick={(e) => e.preventDefault()}
+                            >
+                              <Lock className="h-4 w-4 text-muted-foreground" />
+                            </Button>
+                          </TooltipTrigger>
+                          <TooltipContent side="top" className="max-w-[200px] text-center">
+                            <p className="font-medium">Upgrade to Pro</p>
+                            <p className="text-xs text-muted-foreground">
+                              Tailor your resume & cover letter for each job with AI
+                            </p>
+                          </TooltipContent>
+                        </Tooltip>
+                      </TooltipProvider>
                     )}
                     <Button
                       variant="ghost"
