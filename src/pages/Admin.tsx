@@ -21,6 +21,7 @@ import {
 } from "@/components/ui/select";
 import { Crosshair, Users, Crown, FileText, RefreshCw, ArrowLeft, Loader2, ShieldCheck } from "lucide-react";
 import { toast } from "sonner";
+import Footer from "@/components/Footer";
 import type { User as SupabaseUser } from "@supabase/supabase-js";
 
 interface UserData {
@@ -409,6 +410,8 @@ const Admin = () => {
           </Card>
         )}
       </main>
+
+      <Footer />
     </div>
   );
 };
