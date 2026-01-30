@@ -2086,8 +2086,17 @@ Deno.serve(async (req) => {
                 jobs = await searchCompanyCareerPage(companyName, url, targetRoles, lovableApiKey, serpApiKey);
               } else if (urlLower.includes("amazon.jobs")) {
                 // Amazon.jobs is a JavaScript SPA - use dedicated extractor with Firecrawl
-                console.log(`[BG] Using Firecrawl for Amazon.jobs: ${url}`);
-                const html = await scrapeAggregatorWithFirecrawl(url);
+                // IMPORTANT: Override result_limit to get more results (user's URL may have limit=10)
+                // Amazon often returns international jobs mixed with local, so we need more results to filter
+                let amazonUrl = url;
+                if (amazonUrl.includes("result_limit=")) {
+                  amazonUrl = amazonUrl.replace(/result_limit=\d+/, "result_limit=100");
+                  console.log(`[BG] Increased Amazon result_limit to 100 for better coverage`);
+                } else {
+                  amazonUrl += (amazonUrl.includes("?") ? "&" : "?") + "result_limit=100";
+                }
+                console.log(`[BG] Using Firecrawl for Amazon.jobs: ${amazonUrl}`);
+                const html = await scrapeAggregatorWithFirecrawl(amazonUrl);
                 if (html) {
                   // Use the dedicated Amazon.jobs extraction function
                   jobs = await extractAmazonJobsFromHtml(html, url, lovableApiKey);
