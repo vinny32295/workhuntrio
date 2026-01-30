@@ -38,8 +38,19 @@ const JOB_POSTING_PATTERNS: RegExp[] = [
 ];
 
 const SKIP_DOMAINS = [
+  // Social media
   "linkedin.com", "facebook.com", "twitter.com", "instagram.com",
-  "youtube.com", "reddit.com", "glassdoor.com", "indeed.com",
+  "youtube.com", "reddit.com",
+  // Job aggregators (we want direct postings, not aggregator listings)
+  "glassdoor.com", "indeed.com", "ziprecruiter.com", "monster.com",
+  "careerbuilder.com", "simplyhired.com", "snagajob.com", "dice.com",
+  "randstadusa.com", "randstad.com", "roberthalf.com", "kellyservices.com",
+  "manpower.com", "adecco.com", "expresspros.com", "spherion.com",
+  "aerotek.com", "insight.com", "staffingindustry.com",
+  // Other aggregators
+  "jooble.org", "adzuna.com", "jobrapido.com", "neuvoo.com", "talent.com",
+  "learn4good.com", "jobisland.com", "lensa.com", "getwork.com",
+  "jobs2careers.com", "jobcase.com", "recruit.net",
 ];
 
 interface SearchResult {
