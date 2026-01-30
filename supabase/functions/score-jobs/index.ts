@@ -6,6 +6,9 @@ const corsHeaders = {
     "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
 
+// Tiers that have AI scoring enabled
+const SCORING_ENABLED_TIERS = ["pro", "premium"];
+
 interface DiscoveredJob {
   id: string;
   title: string;
@@ -60,6 +63,31 @@ Deno.serve(async (req) => {
     }
 
     const userId = claimsData.claims.sub as string;
+
+    // Check subscription tier for AI scoring access
+    const serviceClient = createClient(
+      Deno.env.get("SUPABASE_URL")!,
+      Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
+    );
+
+    const { data: subscription } = await serviceClient
+      .from("subscriptions")
+      .select("tier")
+      .eq("user_id", userId)
+      .single();
+
+    const tier = subscription?.tier || "free";
+
+    if (!SCORING_ENABLED_TIERS.includes(tier)) {
+      return new Response(
+        JSON.stringify({ 
+          error: "AI job scoring is a Pro feature. Upgrade to get personalized match scores.",
+          requiresUpgrade: true,
+          tier
+        }),
+        { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
 
     // Get user's resume content
     const { data: profile } = await supabase

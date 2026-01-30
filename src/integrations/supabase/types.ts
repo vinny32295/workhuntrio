@@ -194,6 +194,42 @@ export type Database = {
         }
         Relationships: []
       }
+      usage_tracking: {
+        Row: {
+          created_at: string
+          id: string
+          month_reset_at: string
+          resume_parses_total: number
+          searches_this_week: number
+          tailors_this_month: number
+          updated_at: string
+          user_id: string
+          week_reset_at: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          month_reset_at?: string
+          resume_parses_total?: number
+          searches_this_week?: number
+          tailors_this_month?: number
+          updated_at?: string
+          user_id: string
+          week_reset_at?: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          month_reset_at?: string
+          resume_parses_total?: number
+          searches_this_week?: number
+          tailors_this_month?: number
+          updated_at?: string
+          user_id?: string
+          week_reset_at?: string
+        }
+        Relationships: []
+      }
     }
     Views: {
       [_ in never]: never
