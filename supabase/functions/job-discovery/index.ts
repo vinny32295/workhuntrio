@@ -158,27 +158,155 @@ async function serpApiSearch(
 }
 
 // US ZIP code to city/state mapping for common areas
-const ZIP_TO_LOCATION: Record<string, string> = {
-  "37": "Tennessee",
-  "30": "Georgia Atlanta",
-  "10": "New York NYC",
-  "90": "Los Angeles California",
-  "94": "San Francisco Bay Area",
-  "98": "Seattle Washington",
-  "60": "Chicago Illinois",
-  "02": "Boston Massachusetts",
-  "78": "Texas Austin",
-  "75": "Dallas Texas",
-  "33": "Florida Miami",
-  "20": "Washington DC",
-  "80": "Denver Colorado",
-  "85": "Phoenix Arizona",
+const ZIP_TO_LOCATION: Record<string, { name: string; lat: number; lon: number }> = {
+  "37": { name: "Tennessee", lat: 36.1627, lon: -86.7816 },
+  "30": { name: "Georgia Atlanta", lat: 33.749, lon: -84.388 },
+  "10": { name: "New York NYC", lat: 40.7128, lon: -74.006 },
+  "90": { name: "Los Angeles California", lat: 34.0522, lon: -118.2437 },
+  "94": { name: "San Francisco Bay Area", lat: 37.7749, lon: -122.4194 },
+  "98": { name: "Seattle Washington", lat: 47.6062, lon: -122.3321 },
+  "60": { name: "Chicago Illinois", lat: 41.8781, lon: -87.6298 },
+  "02": { name: "Boston Massachusetts", lat: 42.3601, lon: -71.0589 },
+  "78": { name: "Texas Austin", lat: 30.2672, lon: -97.7431 },
+  "75": { name: "Dallas Texas", lat: 32.7767, lon: -96.797 },
+  "33": { name: "Florida Miami", lat: 25.7617, lon: -80.1918 },
+  "20": { name: "Washington DC", lat: 38.9072, lon: -77.0369 },
+  "80": { name: "Denver Colorado", lat: 39.7392, lon: -104.9903 },
+  "85": { name: "Phoenix Arizona", lat: 33.4484, lon: -112.074 },
+};
+
+// More specific ZIP code mappings for Tennessee
+const ZIP_TO_COORDS: Record<string, { lat: number; lon: number; city: string }> = {
+  "37075": { lat: 36.3884, lon: -86.4539, city: "Hendersonville, TN" },
+  "37027": { lat: 35.9981, lon: -86.6847, city: "Brentwood, TN" },
+  "37209": { lat: 36.1470, lon: -86.9017, city: "Nashville, TN" },
+  "37203": { lat: 36.1498, lon: -86.7919, city: "Nashville, TN" },
 };
 
 function getLocationFromZip(zip: string | null): string | null {
   if (!zip || zip.length < 2) return null;
   const prefix = zip.substring(0, 2);
-  return ZIP_TO_LOCATION[prefix] || null;
+  return ZIP_TO_LOCATION[prefix]?.name || null;
+}
+
+function getCoordsFromZip(zip: string | null): { lat: number; lon: number } | null {
+  if (!zip) return null;
+  
+  // Try exact match first
+  if (ZIP_TO_COORDS[zip]) {
+    return { lat: ZIP_TO_COORDS[zip].lat, lon: ZIP_TO_COORDS[zip].lon };
+  }
+  
+  // Fall back to prefix-based coords
+  const prefix = zip.substring(0, 2);
+  if (ZIP_TO_LOCATION[prefix]) {
+    return { lat: ZIP_TO_LOCATION[prefix].lat, lon: ZIP_TO_LOCATION[prefix].lon };
+  }
+  
+  return null;
+}
+
+// Calculate distance between two coordinates using Haversine formula
+function calculateDistanceMiles(lat1: number, lon1: number, lat2: number, lon2: number): number {
+  const R = 3959; // Earth's radius in miles
+  const dLat = (lat2 - lat1) * Math.PI / 180;
+  const dLon = (lon2 - lon1) * Math.PI / 180;
+  const a = 
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+    Math.sin(dLon / 2) * Math.sin(dLon / 2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return R * c;
+}
+
+// Validate job location using AI
+async function validateJobLocation(
+  jobLocation: string | null,
+  userZip: string,
+  radiusMiles: number,
+  apiKey: string
+): Promise<{ isValid: boolean; distance: number | null; reason: string }> {
+  if (!jobLocation) {
+    return { isValid: false, distance: null, reason: "No location found" };
+  }
+  
+  // Remote jobs are always valid
+  if (/remote|work from home|wfh|anywhere/i.test(jobLocation)) {
+    return { isValid: true, distance: 0, reason: "Remote position" };
+  }
+  
+  const userCoords = getCoordsFromZip(userZip);
+  if (!userCoords) {
+    console.log(`Could not get coordinates for ZIP ${userZip}`);
+    return { isValid: true, distance: null, reason: "Could not validate - allowing" };
+  }
+  
+  // Use AI to extract coordinates from job location
+  const prompt = `Given this job location: "${jobLocation}"
+
+Extract the approximate latitude and longitude coordinates. 
+If it's a city, use the city center coordinates.
+If it's a state or region, use the capital or largest city.
+If it contains multiple locations, use the first one.
+
+Return ONLY a JSON object like: {"lat": 36.1627, "lon": -86.7816, "city": "Nashville, TN"}
+If the location is "Remote" or similar, return: {"remote": true}
+If you cannot determine the location, return: {"unknown": true}`;
+
+  try {
+    const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: "google/gemini-2.5-flash-lite",
+        messages: [
+          { role: "system", content: "You convert location names to coordinates. Always respond with valid JSON only." },
+          { role: "user", content: prompt },
+        ],
+        temperature: 0.1,
+      }),
+    });
+
+    if (!response.ok) {
+      console.error("AI API error for location validation:", response.status);
+      return { isValid: true, distance: null, reason: "API error - allowing" };
+    }
+
+    const data = await response.json();
+    const content = data.choices?.[0]?.message?.content || "";
+    const jsonMatch = content.match(/\{[\s\S]*?\}/);
+    
+    if (!jsonMatch) {
+      return { isValid: true, distance: null, reason: "Could not parse - allowing" };
+    }
+
+    const coords = JSON.parse(jsonMatch[0]);
+    
+    if (coords.remote) {
+      return { isValid: true, distance: 0, reason: "Remote position" };
+    }
+    
+    if (coords.unknown || !coords.lat || !coords.lon) {
+      return { isValid: true, distance: null, reason: "Unknown location - allowing" };
+    }
+    
+    const distance = calculateDistanceMiles(userCoords.lat, userCoords.lon, coords.lat, coords.lon);
+    const isValid = distance <= radiusMiles;
+    
+    return {
+      isValid,
+      distance: Math.round(distance),
+      reason: isValid 
+        ? `Within ${radiusMiles} miles (${Math.round(distance)} mi from ${userZip})`
+        : `Too far: ${Math.round(distance)} miles from ${userZip} (max ${radiusMiles} mi)`
+    };
+  } catch (error) {
+    console.error("Location validation error:", error);
+    return { isValid: true, distance: null, reason: "Validation error - allowing" };
+  }
 }
 
 // Build search queries from user preferences
@@ -402,10 +530,19 @@ async function processAndSaveJobs(
   maxResults: number,
   lovableApiKey: string,
   supabase: any,
-  userId: string
-): Promise<{ inserted: number; skipped: number; withSalary: number; withDescription: number }> {
-  const enrichedJobs: ClassifiedJob[] = [];
+  userId: string,
+  userPreferences: { work_type: string | null; location_zip: string | null; search_radius_miles: number | null }
+): Promise<{ inserted: number; skipped: number; withSalary: number; withDescription: number; filteredByLocation: number }> {
+  const enrichedJobs: (ClassifiedJob & { extractedLocation: string | null })[] = [];
   const jobsToProcess = directPostings.slice(0, Math.min(maxResults, 10)); // Reduced to 10 for speed
+  
+  const requiresLocationValidation = 
+    (userPreferences.work_type === "in-person" || userPreferences.work_type === "hybrid") &&
+    userPreferences.location_zip;
+  
+  const radiusMiles = userPreferences.search_radius_miles || 50;
+  
+  console.log(`Location validation: ${requiresLocationValidation ? `enabled (${radiusMiles} mi from ${userPreferences.location_zip})` : "disabled (remote)"}`);
   
   // Process in parallel batches of 3 for speed
   for (let i = 0; i < jobsToProcess.length; i += 3) {
@@ -428,25 +565,45 @@ async function processAndSaveJobs(
               salaryMax: details.salaryMax,
               salaryCurrency: details.salaryCurrency,
               companySlug: details.company || job.companySlug,
+              extractedLocation: details.location,
             };
           }
-          return job;
+          return { ...job, extractedLocation: null };
         } catch (err) {
           console.error(`Error processing ${job.url}:`, err);
-          return job;
+          return { ...job, extractedLocation: null };
         }
       })
     );
     enrichedJobs.push(...results);
   }
   
-  // Insert into database
+  // Insert into database with location validation
   let inserted = 0;
   let skipped = 0;
   let withSalary = 0;
   let withDescription = 0;
+  let filteredByLocation = 0;
   
   for (const job of enrichedJobs) {
+    // Validate location for in-person/hybrid jobs
+    if (requiresLocationValidation) {
+      const validation = await validateJobLocation(
+        job.extractedLocation,
+        userPreferences.location_zip!,
+        radiusMiles,
+        lovableApiKey
+      );
+      
+      console.log(`Location check for ${job.title}: ${job.extractedLocation} -> ${validation.reason}`);
+      
+      if (!validation.isValid) {
+        console.log(`Skipping job outside radius: ${job.title} at ${job.extractedLocation}`);
+        filteredByLocation++;
+        continue;
+      }
+    }
+    
     const { error } = await supabase.from("discovered_jobs").upsert(
       {
         user_id: userId,
@@ -474,8 +631,8 @@ async function processAndSaveJobs(
     }
   }
   
-  console.log(`Background processing complete: ${inserted} inserted, ${skipped} skipped`);
-  return { inserted, skipped, withSalary, withDescription };
+  console.log(`Background processing complete: ${inserted} inserted, ${skipped} skipped, ${filteredByLocation} filtered by location`);
+  return { inserted, skipped, withSalary, withDescription, filteredByLocation };
 }
 
 Deno.serve(async (req) => {
@@ -535,7 +692,7 @@ Deno.serve(async (req) => {
     // Get user preferences
     const { data: profile } = await supabase
       .from("profiles")
-      .select("target_roles, work_type, location_zip")
+      .select("target_roles, work_type, location_zip, search_radius_miles")
       .eq("user_id", userId)
       .single();
     
@@ -693,7 +850,12 @@ Deno.serve(async (req) => {
       maxResults,
       lovableApiKey,
       supabase,
-      userId
+      userId,
+      {
+        work_type: profile?.work_type || null,
+        location_zip: profile?.location_zip || null,
+        search_radius_miles: profile?.search_radius_miles || 50,
+      }
     );
     
     // Register background task to continue after response
