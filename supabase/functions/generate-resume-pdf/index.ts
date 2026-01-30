@@ -141,6 +141,7 @@ const baseStyles = `
     
     .job {
       margin-bottom: 14px;
+      page-break-inside: avoid;
     }
     
     .job:last-child {
@@ -148,10 +149,21 @@ const baseStyles = `
     }
     
     .job-header {
+      display: block;
+      margin-bottom: 4px;
+    }
+    
+    .job-title-line {
       display: flex;
       justify-content: space-between;
       align-items: baseline;
-      margin-bottom: 4px;
+      flex-wrap: nowrap;
+      gap: 12px;
+    }
+    
+    .job-title-company {
+      flex: 1;
+      min-width: 0;
     }
     
     .job-title {
@@ -168,15 +180,17 @@ const baseStyles = `
       font-size: 9pt;
       color: #666;
       white-space: nowrap;
+      flex-shrink: 0;
     }
     
     .job-bullets {
       margin-left: 18px;
-      margin-top: 4px;
+      margin-top: 6px;
+      list-style-type: disc;
     }
     
     .job-bullets li {
-      margin-bottom: 3px;
+      margin-bottom: 4px;
       padding-left: 4px;
     }
     
@@ -248,11 +262,13 @@ function generateResumeHTML(profile: ProfileData, tailoredSummary?: string, tail
     workExperienceHTML = tailoredWorkHistory.map(job => `
       <div class="job">
         <div class="job-header">
-          <div class="job-title-company">
-            <span class="job-title">${escapeHtml(job.title)}</span>
-            <span class="company"> | ${escapeHtml(job.company)}</span>
+          <div class="job-title-line">
+            <div class="job-title-company">
+              <span class="job-title">${escapeHtml(job.title)}</span>
+              <span class="company"> | ${escapeHtml(job.company)}</span>
+            </div>
+            <div class="job-dates">${escapeHtml(job.startDate)} – ${escapeHtml(job.endDate)}</div>
           </div>
-          <div class="job-dates">${escapeHtml(job.startDate)} – ${escapeHtml(job.endDate)}</div>
         </div>
         <ul class="job-bullets">
           ${job.bullets.map(bullet => `<li>${escapeHtml(bullet)}</li>`).join('\n')}
@@ -263,11 +279,13 @@ function generateResumeHTML(profile: ProfileData, tailoredSummary?: string, tail
     workExperienceHTML = profile.work_history.map(job => `
       <div class="job">
         <div class="job-header">
-          <div class="job-title-company">
-            <span class="job-title">${escapeHtml(job.title)}</span>
-            <span class="company"> | ${escapeHtml(job.company)}</span>
+          <div class="job-title-line">
+            <div class="job-title-company">
+              <span class="job-title">${escapeHtml(job.title)}</span>
+              <span class="company"> | ${escapeHtml(job.company)}</span>
+            </div>
+            <div class="job-dates">${escapeHtml(job.startDate)} – ${escapeHtml(job.endDate)}</div>
           </div>
-          <div class="job-dates">${escapeHtml(job.startDate)} – ${escapeHtml(job.endDate)}</div>
         </div>
         <ul class="job-bullets">
           ${formatBulletPoints(job.description)}
