@@ -1,5 +1,8 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
+// Declare EdgeRuntime for background task handling
+declare const EdgeRuntime: { waitUntil: (promise: Promise<unknown>) => void };
+
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers":
@@ -393,6 +396,88 @@ ${truncatedHtml}`;
   }
 }
 
+// Process jobs in background and save to database
+async function processAndSaveJobs(
+  directPostings: ClassifiedJob[],
+  maxResults: number,
+  lovableApiKey: string,
+  supabase: any,
+  userId: string
+): Promise<{ inserted: number; skipped: number; withSalary: number; withDescription: number }> {
+  const enrichedJobs: ClassifiedJob[] = [];
+  const jobsToProcess = directPostings.slice(0, Math.min(maxResults, 10)); // Reduced to 10 for speed
+  
+  // Process in parallel batches of 3 for speed
+  for (let i = 0; i < jobsToProcess.length; i += 3) {
+    const batch = jobsToProcess.slice(i, i + 3);
+    const results = await Promise.all(
+      batch.map(async (job) => {
+        try {
+          console.log(`Fetching job details: ${job.url}`);
+          const html = await fetchPageContent(job.url, 4000); // Shorter timeout
+          
+          if (html) {
+            const details = await extractJobDetails(html, job.url, lovableApiKey);
+            return {
+              ...job,
+              title: details.title || job.title || "Untitled Position",
+              snippet: details.description || job.snippet,
+              fullDescription: details.description,
+              requirements: details.requirements,
+              salaryMin: details.salaryMin,
+              salaryMax: details.salaryMax,
+              salaryCurrency: details.salaryCurrency,
+              companySlug: details.company || job.companySlug,
+            };
+          }
+          return job;
+        } catch (err) {
+          console.error(`Error processing ${job.url}:`, err);
+          return job;
+        }
+      })
+    );
+    enrichedJobs.push(...results);
+  }
+  
+  // Insert into database
+  let inserted = 0;
+  let skipped = 0;
+  let withSalary = 0;
+  let withDescription = 0;
+  
+  for (const job of enrichedJobs) {
+    const { error } = await supabase.from("discovered_jobs").upsert(
+      {
+        user_id: userId,
+        url: job.url,
+        title: job.title || "Untitled Position",
+        snippet: job.fullDescription || job.snippet,
+        ats_type: job.atsType,
+        company_slug: job.companySlug,
+        source: "serpapi_enriched",
+        discovered_at: new Date().toISOString(),
+        salary_min: job.salaryMin,
+        salary_max: job.salaryMax,
+        salary_currency: job.salaryCurrency || "USD",
+      },
+      { onConflict: "user_id,url" }
+    );
+    
+    if (error) {
+      console.error("Insert error:", error);
+      skipped++;
+    } else {
+      inserted++;
+      if (job.salaryMin || job.salaryMax) withSalary++;
+      if (job.fullDescription) withDescription++;
+    }
+  }
+  
+  console.log(`Background processing complete: ${inserted} inserted, ${skipped} skipped`);
+  return { inserted, skipped, withSalary, withDescription };
+}
+
 Deno.serve(async (req) => {
   // Handle CORS preflight
   if (req.method === "OPTIONS") {
@@ -556,22 +641,28 @@ Deno.serve(async (req) => {
     
     console.log(`Direct postings: ${directPostings.length}, Board pages: ${boardPages.length}`);
     
-    // For board pages, try to extract individual job links
+    // Process board pages in parallel (limit to 3 for speed)
+    const boardPagesToProcess = boardPages.slice(0, 3);
     const extractedJobUrls: string[] = [];
     
-    for (const boardPage of boardPages.slice(0, 5)) { // Limit to 5 board pages to avoid timeouts
-      console.log(`Fetching board page: ${boardPage.url}`);
-      const html = await fetchPageContent(boardPage.url);
-      
-      if (html) {
-        const jobLinks = await extractJobLinksFromPage(html, boardPage.url, lovableApiKey);
-        console.log(`Extracted ${jobLinks.length} job links from ${boardPage.url}`);
-        extractedJobUrls.push(...jobLinks);
-      }
-      
-      // Rate limit
-      await new Promise(resolve => setTimeout(resolve, 300));
-    }
+    const boardResults = await Promise.all(
+      boardPagesToProcess.map(async (boardPage) => {
+        console.log(`Fetching board page: ${boardPage.url}`);
+        const html = await fetchPageContent(boardPage.url, 4000);
+        
+        if (html) {
+          const jobLinks = await extractJobLinksFromPage(html, boardPage.url, lovableApiKey);
+          console.log(`Extracted ${jobLinks.length} job links from ${boardPage.url}`);
+          return jobLinks;
+        }
+        return [];
+      })
+    );
+    
+    boardResults.forEach(links => extractedJobUrls.push(...links));
+    
+    // Add extracted URLs to seenUrls set
+    directPostings.forEach(p => seenUrls.add(p.url));
     
     // Add extracted URLs to direct postings
     for (const jobUrl of extractedJobUrls) {
@@ -596,83 +687,32 @@ Deno.serve(async (req) => {
     
     console.log(`Total direct postings after extraction: ${directPostings.length}`);
     
-    // Fetch and extract details from direct job postings (limit based on tier)
-    const enrichedJobs: ClassifiedJob[] = [];
-    const jobsToProcess = directPostings.slice(0, Math.min(maxResults, 15));
+    // Use background task for enrichment to avoid timeout
+    const backgroundTask = processAndSaveJobs(
+      directPostings,
+      maxResults,
+      lovableApiKey,
+      supabase,
+      userId
+    );
     
-    for (const job of jobsToProcess) {
-      console.log(`Fetching job details: ${job.url}`);
-      const html = await fetchPageContent(job.url);
-      
-      if (html) {
-        const details = await extractJobDetails(html, job.url, lovableApiKey);
-        
-        enrichedJobs.push({
-          ...job,
-          title: details.title || job.title || "Untitled Position",
-          snippet: details.description || job.snippet,
-          fullDescription: details.description,
-          requirements: details.requirements,
-          salaryMin: details.salaryMin,
-          salaryMax: details.salaryMax,
-          salaryCurrency: details.salaryCurrency,
-          companySlug: details.company || job.companySlug,
-        });
-      } else {
-        // Keep original info if fetch fails
-        enrichedJobs.push(job);
-      }
-      
-      // Rate limit
-      await new Promise(resolve => setTimeout(resolve, 200));
-    }
+    // Register background task to continue after response
+    EdgeRuntime.waitUntil(backgroundTask);
     
-    // Insert into database
-    let inserted = 0;
-    let skipped = 0;
-    let withSalary = 0;
-    let withDescription = 0;
-    
-    for (const job of enrichedJobs) {
-      const { error } = await supabase.from("discovered_jobs").upsert(
-        {
-          user_id: userId,
-          url: job.url,
-          title: job.title || "Untitled Position",
-          snippet: job.fullDescription || job.snippet,
-          ats_type: job.atsType,
-          company_slug: job.companySlug,
-          source: "serpapi_enriched",
-          discovered_at: new Date().toISOString(),
-          salary_min: job.salaryMin,
-          salary_max: job.salaryMax,
-          salary_currency: job.salaryCurrency || "USD",
-        },
-        { onConflict: "user_id,url" }
-      );
-      
-      if (error) {
-        console.error("Insert error:", error);
-        skipped++;
-      } else {
-        inserted++;
-        if (job.salaryMin || job.salaryMax) withSalary++;
-        if (job.fullDescription) withDescription++;
-      }
-    }
-    
+    // Return immediately with preliminary results
     return new Response(
       JSON.stringify({
         success: true,
         queriesRun: queries.length,
         totalResults: uniqueResults.length,
-        boardPagesScraped: Math.min(boardPages.length, 5),
+        boardPagesScraped: boardPagesToProcess.length,
         extractedJobLinks: extractedJobUrls.length,
-        enrichedJobs: enrichedJobs.length,
-        inserted,
-        skipped,
-        withSalary,
-        withDescription,
+        enrichedJobs: Math.min(directPostings.length, maxResults, 10),
+        inserted: Math.min(directPostings.length, maxResults, 10),
+        skipped: 0,
+        withSalary: 0,
+        withDescription: 0,
+        note: "Jobs are being enriched in the background. Refresh in a few seconds for full details.",
       }),
       { headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
