@@ -102,20 +102,38 @@ serve(async (req) => {
       const productId = subscription.items.data[0].price.product as string;
       tier = PRODUCT_TO_TIER[productId] || "pro";
       logStep("Active subscription found", { subscriptionId: subscription.id, tier, endDate: subscriptionEnd });
+      
+      // Update subscriptions table with Stripe subscription
+      await supabaseClient
+        .from("subscriptions")
+        .upsert({ 
+          user_id: user.id, 
+          tier, 
+          status: "active",
+          current_period_end: subscriptionEnd
+        }, { onConflict: "user_id" });
+      logStep("Updated subscriptions table", { tier });
     } else {
-      logStep("No active subscription found");
+      logStep("No active Stripe subscription, checking for admin-assigned tier");
+      
+      // Check database for admin-assigned tier before defaulting to free
+      const { data: dbSubscription } = await supabaseClient
+        .from("subscriptions")
+        .select("tier, status")
+        .eq("user_id", user.id)
+        .maybeSingle();
+      
+      if (dbSubscription && dbSubscription.tier !== "free") {
+        tier = dbSubscription.tier;
+        logStep("Using admin-assigned tier from database", { tier });
+      } else {
+        logStep("No admin-assigned tier, defaulting to free");
+        // Only upsert free if no admin tier exists
+        await supabaseClient
+          .from("subscriptions")
+          .upsert({ user_id: user.id, tier: "free", status: "active" }, { onConflict: "user_id" });
+      }
     }
-
-    // Update subscriptions table
-    await supabaseClient
-      .from("subscriptions")
-      .upsert({ 
-        user_id: user.id, 
-        tier, 
-        status: hasActiveSub ? "active" : "canceled",
-        current_period_end: subscriptionEnd
-      }, { onConflict: "user_id" });
-    logStep("Updated subscriptions table", { tier });
 
     return new Response(JSON.stringify({
       subscribed: hasActiveSub,
