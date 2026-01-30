@@ -3,12 +3,13 @@ import { useNavigate, Link } from "react-router-dom";
 import { supabase } from "@/lib/supabase";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Crosshair, LogOut, Settings, BarChart3, ChevronDown, Search, User, Crown, Sparkles } from "lucide-react";
+import { Crosshair, LogOut, Settings, BarChart3, ChevronDown, Search, User, Crown, Sparkles, Building2 } from "lucide-react";
 import type { User as SupabaseUser } from "@supabase/supabase-js";
 import JobPreferencesForm from "@/components/JobPreferencesForm";
 import JobApplicationsTable from "@/components/JobApplicationsTable";
 import DiscoveredJobsTable from "@/components/DiscoveredJobsTable";
 import StartHuntButton from "@/components/StartHuntButton";
+import CompanyTargets from "@/components/CompanyTargets";
 import Footer from "@/components/Footer";
 import { TierKey } from "@/lib/stripe";
 import {
@@ -242,6 +243,28 @@ const Dashboard = () => {
             <CollapsibleContent className="px-6 pb-6">
               {user && (
                 <JobPreferencesForm 
+                  userId={user.id}
+                  onSave={handlePreferencesSave}
+                />
+              )}
+            </CollapsibleContent>
+          </Collapsible>
+
+          {/* Company Targets Section - Collapsible */}
+          <Collapsible className="glass-card border border-white/10 rounded-2xl" defaultOpen={false}>
+            <CollapsibleTrigger className="w-full p-6 flex items-center justify-between hover:bg-white/5 transition-colors rounded-2xl">
+              <h2 className="text-xl font-semibold flex items-center gap-2">
+                <Building2 className="h-5 w-5 text-primary" />
+                Company Targets
+                <span className="ml-2 text-xs font-normal text-muted-foreground">
+                  Optional
+                </span>
+              </h2>
+              <ChevronDown className="h-5 w-5 text-muted-foreground transition-transform duration-200 [[data-state=open]>&]:rotate-180" />
+            </CollapsibleTrigger>
+            <CollapsibleContent className="px-6 pb-6">
+              {user && (
+                <CompanyTargets 
                   userId={user.id}
                   onSave={handlePreferencesSave}
                 />
