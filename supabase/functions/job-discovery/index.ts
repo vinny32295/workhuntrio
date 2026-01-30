@@ -1793,11 +1793,13 @@ async function processAndSaveJobs(
               } else if (location.match(/\b(remote|virtual|work from home|wfh)\b/i)) {
                 proximityScore = 0.85; // Remote jobs are highly relevant
                 console.log(`Target URL job (REMOTE): "${enrichedJob.title}" at ${enrichedJob.extractedLocation}`);
-              } else if (location.match(/\b(jpn|japan|ita|italy|deu|germany|gbr|uk|chn|china|ind|india|aus|australia|can|canada|mex|mexico|bra|brazil|fra|france|esp|spain|kor|korea)\b/i)) {
-                proximityScore = 0.2; // International jobs get low priority
-                console.log(`Target URL job (INTERNATIONAL): "${enrichedJob.title}" at ${enrichedJob.extractedLocation}`);
+              } else if (location.match(/\b(jpn|japan|ita|italy|deu|germany|gbr|uk|chn|china|ind|india|aus|australia|can|canada|mex|mexico|bra|brazil|fra|france|esp|spain|kor|korea|sgp|singapore|isr|israel|nld|netherlands|bel|belgium|swe|sweden|nor|norway|dnk|denmark|fin|finland|irl|ireland|pol|poland|cze|czech|aut|austria|che|switzerland|nzl|zealand|rou|romania|ukr|ukraine|tur|turkey|egy|egypt|zaf|africa|arg|argentina|col|colombia|chl|chile|per|peru|phl|philippines|idn|indonesia|mys|malaysia|tha|thailand|vnm|vietnam|twn|taiwan|hkg|hong kong)\b/i)) {
+                // SKIP international jobs entirely - don't insert them
+                console.log(`Target URL job SKIPPED (INTERNATIONAL): "${enrichedJob.title}" at ${enrichedJob.extractedLocation}`);
+                skipped++;
+                return; // Skip to next job
               } else {
-                proximityScore = 0.5; // Unknown location
+                proximityScore = 0.6; // Unknown location - still include but lower priority
                 console.log(`Target URL job (UNKNOWN LOC): "${enrichedJob.title}" at ${enrichedJob.extractedLocation}`);
               }
             }
