@@ -37,21 +37,30 @@ const JOB_POSTING_PATTERNS: RegExp[] = [
   /\w+\.bamboohr\.com\/careers\/\d+/,
 ];
 
+// Domains to completely skip (no useful job data)
 const SKIP_DOMAINS = [
   // Social media
   "linkedin.com", "facebook.com", "twitter.com", "instagram.com",
   "youtube.com", "reddit.com",
-  // Job aggregators (we want direct postings, not aggregator listings)
+];
+
+// Job aggregators - we'll scrape these for direct company links instead of skipping
+const AGGREGATOR_DOMAINS = [
   "glassdoor.com", "indeed.com", "ziprecruiter.com", "monster.com",
   "careerbuilder.com", "simplyhired.com", "snagajob.com", "dice.com",
   "randstadusa.com", "randstad.com", "roberthalf.com", "kellyservices.com",
   "manpower.com", "adecco.com", "expresspros.com", "spherion.com",
   "aerotek.com", "insight.com", "staffingindustry.com",
-  // Other aggregators
   "jooble.org", "adzuna.com", "jobrapido.com", "neuvoo.com", "talent.com",
   "learn4good.com", "jobisland.com", "lensa.com", "getwork.com",
   "jobs2careers.com", "jobcase.com", "recruit.net",
 ];
+
+// Check if URL is from an aggregator
+function isAggregatorUrl(url: string): boolean {
+  const urlLower = url.toLowerCase();
+  return AGGREGATOR_DOMAINS.some(domain => urlLower.includes(domain));
+}
 
 interface SearchResult {
   title: string;
@@ -102,9 +111,13 @@ function classifyUrl(url: string): { type: string | null; companySlug: string | 
   return { type: null, companySlug: null };
 }
 
-// Filter and classify search results
-function filterResults(results: SearchResult[]): ClassifiedJob[] {
+// Filter and classify search results - now returns aggregator URLs separately
+function filterResults(results: SearchResult[]): { 
+  classified: ClassifiedJob[]; 
+  aggregatorUrls: string[];
+} {
   const classified: ClassifiedJob[] = [];
+  const aggregatorUrls: string[] = [];
   
   for (const result of results) {
     const url = result.url.toLowerCase();
@@ -114,6 +127,12 @@ function filterResults(results: SearchResult[]): ClassifiedJob[] {
     
     // Skip non-HTML files
     if (/\.(pdf|doc|png|jpg|jpeg|gif)$/i.test(url)) continue;
+    
+    // Collect aggregator URLs for later processing
+    if (isAggregatorUrl(result.url)) {
+      aggregatorUrls.push(result.url);
+      continue;
+    }
     
     const { type, companySlug } = classifyUrl(result.url);
     
@@ -135,7 +154,83 @@ function filterResults(results: SearchResult[]): ClassifiedJob[] {
     }
   }
   
-  return classified;
+  return { classified, aggregatorUrls };
+}
+
+// Extract direct company job links from aggregator pages
+async function extractDirectLinksFromAggregator(
+  html: string,
+  pageUrl: string,
+  apiKey: string
+): Promise<string[]> {
+  const truncatedHtml = html.substring(0, 50000);
+  
+  const prompt = `This is HTML from a job aggregator page (like Monster, Indeed, etc.).
+  
+Page URL: ${pageUrl}
+
+Your task: Find "Apply on company site" or "Apply directly" links that go to the ACTUAL company career pages, NOT links that stay on this aggregator.
+
+Look for:
+- "Apply on company site" buttons/links
+- "Apply directly" or "Apply at employer" links  
+- Links to company career pages (greenhouse, lever, workable, company websites with /careers/)
+- External links that leave the aggregator domain
+
+DO NOT include:
+- Links that stay on ${new URL(pageUrl).hostname}
+- "Easy Apply" or "Quick Apply" on the aggregator
+- Links to other aggregators (indeed, glassdoor, linkedin, etc.)
+
+Return ONLY a JSON array of absolute URLs to direct company job postings. Maximum 10 URLs.
+If no direct company links found, return [].
+
+HTML (truncated):
+${truncatedHtml}`;
+
+  try {
+    const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: "google/gemini-2.5-flash",
+        messages: [
+          { role: "system", content: "You extract direct company job URLs from aggregator pages. Only return URLs to actual company career pages, not aggregator links. Always respond with valid JSON arrays." },
+          { role: "user", content: prompt },
+        ],
+        temperature: 0.1,
+      }),
+    });
+
+    if (!response.ok) {
+      console.error("AI API error for aggregator extraction:", response.status);
+      return [];
+    }
+
+    const data = await response.json();
+    const content = data.choices?.[0]?.message?.content || "";
+
+    const jsonMatch = content.match(/\[[\s\S]*?\]/);
+    if (!jsonMatch) return [];
+
+    const urls = JSON.parse(jsonMatch[0]);
+    
+    // Filter to only include valid URLs that aren't aggregators
+    return Array.isArray(urls) 
+      ? urls.filter((u: any) => 
+          typeof u === "string" && 
+          u.startsWith("http") && 
+          !isAggregatorUrl(u) &&
+          !SKIP_DOMAINS.some(domain => u.toLowerCase().includes(domain))
+        )
+      : [];
+  } catch (error) {
+    console.error("Aggregator extraction error:", error);
+    return [];
+  }
 }
 
 // SerpAPI search
@@ -799,22 +894,22 @@ Deno.serve(async (req) => {
       return true;
     });
     
-    const classifiedJobs = filterResults(uniqueResults);
+    const { classified: classifiedJobs, aggregatorUrls } = filterResults(uniqueResults);
     
-    console.log(`Found ${classifiedJobs.length} relevant jobs from ${uniqueResults.length} unique results`);
+    console.log(`Found ${classifiedJobs.length} relevant jobs, ${aggregatorUrls.length} aggregator pages from ${uniqueResults.length} unique results`);
     
     // Separate direct postings from board pages
-    const directPostings = classifiedJobs.filter(j => j.isDirectPosting);
+    const directPostings: ClassifiedJob[] = classifiedJobs.filter(j => j.isDirectPosting);
     const boardPages = classifiedJobs.filter(j => !j.isDirectPosting);
     
-    console.log(`Direct postings: ${directPostings.length}, Board pages: ${boardPages.length}`);
+    console.log(`Direct postings: ${directPostings.length}, Board pages: ${boardPages.length}, Aggregators: ${aggregatorUrls.length}`);
     
     // Process board pages in parallel (limit to 3 for speed)
     const boardPagesToProcess = boardPages.slice(0, 3);
     const extractedJobUrls: string[] = [];
     
     const boardResults = await Promise.all(
-      boardPagesToProcess.map(async (boardPage) => {
+      boardPagesToProcess.map(async (boardPage: ClassifiedJob) => {
         console.log(`Fetching board page: ${boardPage.url}`);
         const html = await fetchPageContent(boardPage.url, 4000);
         
@@ -827,14 +922,39 @@ Deno.serve(async (req) => {
       })
     );
     
-    boardResults.forEach(links => extractedJobUrls.push(...links));
+    boardResults.forEach((links: string[]) => extractedJobUrls.push(...links));
+    
+    // Process aggregator pages to extract direct company links (limit to 3 for speed)
+    const aggregatorsToProcess = aggregatorUrls.slice(0, 3);
+    const directLinksFromAggregators: string[] = [];
+    
+    if (aggregatorsToProcess.length > 0) {
+      console.log(`Processing ${aggregatorsToProcess.length} aggregator pages for direct links...`);
+      
+      const aggregatorResults = await Promise.all(
+        aggregatorsToProcess.map(async (aggUrl: string) => {
+          console.log(`Extracting direct links from aggregator: ${aggUrl}`);
+          const html = await fetchPageContent(aggUrl, 5000);
+          
+          if (html) {
+            const directLinks = await extractDirectLinksFromAggregator(html, aggUrl, lovableApiKey);
+            console.log(`Found ${directLinks.length} direct company links from ${aggUrl}`);
+            return directLinks;
+          }
+          return [];
+        })
+      );
+      
+      aggregatorResults.forEach((links: string[]) => directLinksFromAggregators.push(...links));
+      console.log(`Total direct links from aggregators: ${directLinksFromAggregators.length}`);
+    }
     
     // Add extracted URLs to seenUrls set
-    directPostings.forEach(p => seenUrls.add(p.url));
+    directPostings.forEach((p: ClassifiedJob) => seenUrls.add(p.url));
     
-    // Add extracted URLs to direct postings
+    // Add extracted URLs from board pages
     for (const jobUrl of extractedJobUrls) {
-      if (!seenUrls.has(jobUrl)) {
+      if (!seenUrls.has(jobUrl) && !isAggregatorUrl(jobUrl)) {
         seenUrls.add(jobUrl);
         const { type, companySlug } = classifyUrl(jobUrl);
         directPostings.push({
@@ -853,7 +973,28 @@ Deno.serve(async (req) => {
       }
     }
     
-    console.log(`Total direct postings after extraction: ${directPostings.length}`);
+    // Add direct links from aggregator pages
+    for (const jobUrl of directLinksFromAggregators) {
+      if (!seenUrls.has(jobUrl)) {
+        seenUrls.add(jobUrl);
+        const { type, companySlug } = classifyUrl(jobUrl);
+        directPostings.push({
+          url: jobUrl,
+          title: "",
+          snippet: "",
+          atsType: type || "careers_page",
+          companySlug,
+          salaryMin: null,
+          salaryMax: null,
+          salaryCurrency: null,
+          fullDescription: null,
+          requirements: null,
+          isDirectPosting: true,
+        });
+      }
+    }
+    
+    console.log(`Total direct postings after all extraction: ${directPostings.length}`);
     
     // Use background task for enrichment to avoid timeout
     const backgroundTask = processAndSaveJobs(
