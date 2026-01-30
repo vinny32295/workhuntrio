@@ -26,6 +26,14 @@ const ATS_PATTERNS: Record<string, RegExp[]> = {
   ashby: [/jobs\.ashbyhq\.com\/(\w+)/],
   bamboohr: [/(\w+)\.bamboohr\.com\/jobs/],
   wellfound: [/wellfound\.com\/company\/(\w+)/],
+  // Additional ATS platforms common for retail/entry-level
+  icims: [/careers-(\w+)\.icims\.com/, /(\w+)\.icims\.com/],
+  workday: [/(\w+)\.wd\d+\.myworkdayjobs\.com/],
+  ultipro: [/recruiting\.ultipro\.com\/(\w+)/],
+  applicantpro: [/(\w+)\.applicantpro\.com/],
+  paylocity: [/recruiting\.paylocity\.com\/(\w+)/],
+  adp: [/workforcenow\.adp\.com/],
+  snagajob: [/snagajob\.com\/job-seeker\/jobs/],
 };
 
 // Patterns for individual job posting URLs (not just board pages)
@@ -35,6 +43,11 @@ const JOB_POSTING_PATTERNS: RegExp[] = [
   /apply\.workable\.com\/\w+\/j\/[\w-]+/,
   /jobs\.ashbyhq\.com\/\w+\/[\w-]+/,
   /\w+\.bamboohr\.com\/careers\/\d+/,
+  // Retail/entry-level ATS patterns
+  /careers-\w+\.icims\.com\/jobs\/\d+/,
+  /\w+\.wd\d+\.myworkdayjobs\.com\/.*\/job\//,
+  /recruiting\.ultipro\.com\/\w+\/JobBoard\/.*\/OpportunityDetail/,
+  /\w+\.applicantpro\.com\/jobs\/\d+/,
 ];
 
 // Domains to completely skip (no useful job data)
@@ -209,27 +222,39 @@ async function extractDirectLinksFromAggregator(
   pageUrl: string,
   apiKey: string
 ): Promise<string[]> {
-  const truncatedHtml = html.substring(0, 50000);
+  const truncatedHtml = html.substring(0, 60000);
   
-  const prompt = `This is HTML from a job aggregator page (like Monster, Indeed, etc.).
+  const prompt = `This is HTML from a job aggregator page (like Monster, Indeed, Snagajob, etc.).
   
 Page URL: ${pageUrl}
 
-Your task: Find "Apply on company site" or "Apply directly" links that go to the ACTUAL company career pages, NOT links that stay on this aggregator.
+Your task: Find DIRECT LINKS to company job applications. These could be:
 
-Look for:
-- "Apply on company site" buttons/links
-- "Apply directly" or "Apply at employer" links  
-- Links to company career pages (greenhouse, lever, workable, company websites with /careers/)
-- External links that leave the aggregator domain
-- href attributes in <a> tags that point to external domains
+1. "Apply on company site" or "Apply directly" buttons
+2. Links containing company names + "/careers/" or "/jobs/"
+3. Links to known ATS platforms: greenhouse, lever, workable, ashby, bamboohr, icims, myworkdayjobs, ultipro
+4. Any external links that go to a company's own website (not this aggregator)
+5. Job posting URLs embedded in data attributes or onclick handlers
+
+Common patterns for retail/entry-level job links:
+- company.com/careers/job/12345
+- jobs.company.com/position/cashier
+- company.applicantpro.com/jobs/
+- recruiting.ultipro.com/company
+- company.wd5.myworkdayjobs.com
+
+Also check for:
+- href attributes pointing to external domains
+- data-href or data-url attributes
+- Links in "company" or "employer" sections
 
 DO NOT include:
 - Links that stay on ${new URL(pageUrl).hostname}
-- "Easy Apply" or "Quick Apply" on the aggregator
-- Links to other aggregators (indeed, glassdoor, linkedin, etc.)
+- "Easy Apply" or "Quick Apply" buttons (these are aggregator applications)
+- Links to other aggregators (indeed, glassdoor, linkedin, ziprecruiter, monster)
+- Social media links
 
-Return ONLY a JSON array of absolute URLs to direct company job postings. Maximum 15 URLs.
+Return ONLY a JSON array of absolute URLs to direct company job postings. Maximum 20 URLs.
 If no direct company links found, return [].
 
 HTML (truncated):
@@ -462,6 +487,23 @@ If you cannot determine the location, return: {"unknown": true}`;
   }
 }
 
+// Roles that are typically entry-level / retail / hourly
+const ENTRY_LEVEL_ROLES = [
+  "cashier", "retail", "sales associate", "store clerk", "barista", 
+  "server", "waiter", "waitress", "host", "hostess", "busser", 
+  "cook", "line cook", "prep cook", "dishwasher", "fast food",
+  "warehouse", "stocker", "stock", "inventory", "picker", "packer",
+  "customer service", "front desk", "receptionist", "call center",
+  "driver", "delivery", "courier", "cleaning", "janitor", "housekeeper",
+  "security", "guard", "laborer", "construction", "hvac", "technician",
+  "mechanic", "plumber", "electrician", "maintenance"
+];
+
+function isEntryLevelRole(role: string): boolean {
+  const roleLower = role.toLowerCase();
+  return ENTRY_LEVEL_ROLES.some(r => roleLower.includes(r));
+}
+
 // Build search queries from user preferences
 function buildSearchQueries(preferences: {
   target_roles: string[] | null;
@@ -479,13 +521,23 @@ function buildSearchQueries(preferences: {
     : "";
   
   for (const role of roles.slice(0, 3)) {
+    const isEntryLevel = isEntryLevelRole(role);
+    
     if (workType === "remote") {
       // Remote searches - target specific job postings, not just boards
       queries.push(`site:boards.greenhouse.io/*/jobs remote "${role}"`);
       queries.push(`site:jobs.lever.co remote "${role}" apply`);
       queries.push(`remote "${role}" jobs hiring 2026`);
+    } else if (isEntryLevel) {
+      // Entry-level/retail jobs - focus on aggregators and direct company searches
+      // These rarely appear on tech-focused ATS platforms
+      queries.push(`"${role}" jobs "${locationTerm}" hiring now apply`);
+      queries.push(`"${role}" "${locationTerm}" careers site:*.com/careers`);
+      queries.push(`site:snagajob.com "${role}" ${locationTerm}`);
+      queries.push(`"${role}" jobs near ${locationTerm} apply online`);
+      queries.push(`"now hiring" "${role}" ${locationTerm}`);
     } else {
-      // In-person/hybrid - include location
+      // Professional in-person/hybrid - include ATS sites
       queries.push(`site:boards.greenhouse.io/*/jobs ${locationTerm} "${role}"`);
       queries.push(`site:jobs.lever.co ${locationTerm} "${role}" apply`);
       queries.push(`"${role}" jobs ${locationTerm} hiring 2026`);
@@ -493,13 +545,16 @@ function buildSearchQueries(preferences: {
     }
   }
   
-  // Add some broad ATS searches with location if applicable
-  if (locationTerm) {
-    queries.push(`site:apply.workable.com/*/j ${locationTerm}`);
-    queries.push(`site:jobs.ashbyhq.com ${locationTerm}`);
-  } else {
-    queries.push(`site:apply.workable.com/*/j ${workType}`);
-    queries.push(`site:jobs.ashbyhq.com ${workType}`);
+  // Add ATS searches for non-entry-level roles
+  const hasNonEntryLevel = roles.some(r => !isEntryLevelRole(r));
+  if (hasNonEntryLevel) {
+    if (locationTerm) {
+      queries.push(`site:apply.workable.com/*/j ${locationTerm}`);
+      queries.push(`site:jobs.ashbyhq.com ${locationTerm}`);
+    } else {
+      queries.push(`site:apply.workable.com/*/j ${workType}`);
+      queries.push(`site:jobs.ashbyhq.com ${workType}`);
+    }
   }
   
   return queries;
