@@ -1365,7 +1365,129 @@ async function fetchPageContent(url: string, timeoutMs: number = 5000): Promise<
   }
 }
 
-// Extract job listings from Amazon.jobs HTML
+// NEW: Fetch Amazon jobs using their JSON API (much more reliable than HTML scraping)
+async function fetchAmazonJobsViaApi(
+  userUrl: string,
+  maxResults: number = 50
+): Promise<ClassifiedJob[]> {
+  console.log(`Fetching Amazon jobs via JSON API from: ${userUrl}`);
+  
+  try {
+    // Parse the user's URL to extract search parameters
+    const url = new URL(userUrl);
+    const params = new URLSearchParams(url.search);
+    
+    // Build the JSON API URL
+    const apiUrl = new URL("https://www.amazon.jobs/en/search.json");
+    
+    // Copy relevant parameters
+    const paramsToCopy = [
+      "offset", "result_limit", "sort", "distanceType", "radius",
+      "loc_group_id", "loc_query", "base_query", "city", "country", 
+      "region", "county", "latitude", "longitude"
+    ];
+    
+    for (const param of paramsToCopy) {
+      const value = params.get(param);
+      if (value) {
+        apiUrl.searchParams.set(param, value);
+      }
+    }
+    
+    // Handle array parameters like state[]
+    const states = params.getAll("state[]") || params.getAll("state%5B%5D");
+    for (const state of states) {
+      apiUrl.searchParams.append("state[]", state);
+    }
+    
+    // Ensure we get enough results
+    apiUrl.searchParams.set("result_limit", String(Math.min(maxResults, 100)));
+    apiUrl.searchParams.set("offset", "0");
+    
+    console.log(`Amazon API URL: ${apiUrl.toString()}`);
+    
+    const response = await fetch(apiUrl.toString(), {
+      headers: {
+        "Accept": "application/json",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+      },
+    });
+    
+    if (!response.ok) {
+      console.error(`Amazon API error: ${response.status}`);
+      return [];
+    }
+    
+    const data = await response.json();
+    
+    // Amazon's API returns { jobs: [...], hits: number }
+    const jobs = data.jobs || [];
+    console.log(`Amazon API returned ${jobs.length} jobs (total hits: ${data.hits || 0})`);
+    
+    // Convert to ClassifiedJob format with location filtering
+    const results: ClassifiedJob[] = [];
+    const targetState = states[0]?.toLowerCase() || "";
+    const targetLocQuery = (params.get("loc_query") || "").toLowerCase();
+    
+    for (const job of jobs) {
+      // Extract location
+      const location = job.location || job.primary_location || "";
+      const locationLower = location.toLowerCase();
+      
+      // Filter: Skip if location doesn't match user's filter
+      // Check for state match or city match
+      const matchesState = targetState && locationLower.includes(targetState);
+      const matchesLocQuery = targetLocQuery && (
+        locationLower.includes(targetLocQuery.split(",")[0]) || // City name
+        targetLocQuery.includes(locationLower.split(",")[0])
+      );
+      const isUS = locationLower.includes("usa") || 
+                   locationLower.includes("united states") ||
+                   locationLower.match(/\b[a-z]{2}, usa?\b/i) || // "TN, USA" pattern
+                   locationLower.match(/\b(tn|tennessee|nashville)\b/i);
+      
+      // Skip international jobs
+      const isInternational = locationLower.match(
+        /\b(jpn|japan|deu|germany|gbr|uk|ind|india|aus|australia|chn|china|fra|france|esp|spain|ita|italy|mex|mexico|bra|brazil|can|canada|sgp|singapore)\b/i
+      );
+      
+      if (isInternational && !isUS) {
+        console.log(`Skipping international: ${job.title} at ${location}`);
+        continue;
+      }
+      
+      // Build the job URL
+      const jobUrl = job.job_path 
+        ? `https://www.amazon.jobs${job.job_path}`
+        : `https://www.amazon.jobs/en/jobs/${job.id_icims}/${job.url_next_step || ""}`;
+      
+      results.push({
+        url: jobUrl,
+        title: job.title || "Amazon Job",
+        snippet: location,
+        atsType: "amazon",
+        companySlug: "amazon",
+        salaryMin: null,
+        salaryMax: null,
+        salaryCurrency: null,
+        fullDescription: job.description_short || job.basic_qualifications || null,
+        requirements: null,
+        isDirectPosting: true,
+        isFromTargetUrl: true,
+        sourceUrl: userUrl,
+      });
+    }
+    
+    console.log(`Filtered to ${results.length} jobs matching location criteria`);
+    return results;
+    
+  } catch (error) {
+    console.error("Amazon API fetch error:", error);
+    return [];
+  }
+}
+
+// Extract job listings from Amazon.jobs HTML (fallback for when API doesn't work)
 async function extractAmazonJobsFromHtml(
   html: string,
   pageUrl: string,
@@ -2164,29 +2286,37 @@ Deno.serve(async (req) => {
                 const companyName = companyMatch ? companyMatch[1] : "Company";
                 jobs = await searchCompanyCareerPage(companyName, url, targetRoles, lovableApiKey, serpApiKey);
               } else if (urlLower.includes("amazon.jobs")) {
-                // Amazon.jobs is a JavaScript SPA - use dedicated extractor with Firecrawl
-                // IMPORTANT: Override result_limit to get more results (user's URL may have limit=10)
-                // Amazon often returns international jobs mixed with local, so we need more results to filter
-                let amazonUrl = url;
-                if (amazonUrl.includes("result_limit=")) {
-                  amazonUrl = amazonUrl.replace(/result_limit=\d+/, "result_limit=100");
-                  console.log(`[BG] Increased Amazon result_limit to 100 for better coverage`);
-                } else {
-                  amazonUrl += (amazonUrl.includes("?") ? "&" : "?") + "result_limit=100";
-                }
-                console.log(`[BG] Using Firecrawl for Amazon.jobs with scroll actions: ${amazonUrl}`);
-                // Pass scrollForMore=true to trigger infinite scroll on the SPA
-                const html = await scrapeAggregatorWithFirecrawl(amazonUrl, true);
-                if (html) {
-                  // Use the dedicated Amazon.jobs extraction function
-                  jobs = await extractAmazonJobsFromHtml(html, url, lovableApiKey);
-                  console.log(`[BG] Extracted ${jobs.length} jobs from Amazon.jobs (with scroll)`);
-                } else {
-                  console.log(`[BG] Firecrawl failed for Amazon.jobs, trying direct fetch...`);
-                  const fetchResult = await fetchPageContent(url, 5000);
-                  if (fetchResult.html && !fetchResult.is404) {
-                    jobs = await extractAmazonJobsFromHtml(fetchResult.html, url, lovableApiKey);
-                    console.log(`[BG] Direct fetch extracted ${jobs.length} jobs from Amazon.jobs`);
+                // Amazon.jobs - try JSON API first (more reliable), fallback to HTML scraping
+                console.log(`[BG] Processing Amazon.jobs URL: ${url}`);
+                
+                // First try the JSON API (much more reliable than HTML scraping)
+                jobs = await fetchAmazonJobsViaApi(url, 100);
+                console.log(`[BG] Amazon JSON API returned ${jobs.length} jobs`);
+                
+                // If API failed or returned no results, fallback to HTML scraping
+                if (jobs.length === 0) {
+                  console.log(`[BG] Amazon API returned 0 jobs, falling back to HTML scraping...`);
+                  
+                  // IMPORTANT: Override result_limit to get more results
+                  let amazonUrl = url;
+                  if (amazonUrl.includes("result_limit=")) {
+                    amazonUrl = amazonUrl.replace(/result_limit=\d+/, "result_limit=100");
+                  } else {
+                    amazonUrl += (amazonUrl.includes("?") ? "&" : "?") + "result_limit=100";
+                  }
+                  
+                  // Try Firecrawl with scroll actions for the SPA
+                  const html = await scrapeAggregatorWithFirecrawl(amazonUrl, true);
+                  if (html) {
+                    jobs = await extractAmazonJobsFromHtml(html, url, lovableApiKey);
+                    console.log(`[BG] Firecrawl HTML scraping extracted ${jobs.length} jobs`);
+                  } else {
+                    // Final fallback: direct fetch
+                    const fetchResult = await fetchPageContent(url, 5000);
+                    if (fetchResult.html && !fetchResult.is404) {
+                      jobs = await extractAmazonJobsFromHtml(fetchResult.html, url, lovableApiKey);
+                      console.log(`[BG] Direct fetch extracted ${jobs.length} jobs`);
+                    }
                   }
                 }
               } else {
