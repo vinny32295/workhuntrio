@@ -3,8 +3,6 @@ import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Badge } from "@/components/ui/badge";
-import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { X, Plus, Loader2, Building2, ExternalLink, AlertCircle } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 
@@ -13,17 +11,13 @@ interface CompanyTargetsProps {
   onSave?: () => void;
 }
 
-type SearchMode = "combined" | "urls_only" | "search_only";
-
 interface CompanySettings {
   target_company_urls: string[];
-  search_mode: SearchMode;
 }
 
 const CompanyTargets = ({ userId, onSave }: CompanyTargetsProps) => {
   const [settings, setSettings] = useState<CompanySettings>({
     target_company_urls: [],
-    search_mode: "combined",
   });
   const [newUrl, setNewUrl] = useState("");
   const [loading, setLoading] = useState(true);
@@ -39,7 +33,7 @@ const CompanyTargets = ({ userId, onSave }: CompanyTargetsProps) => {
     try {
       const { data, error } = await supabase
         .from("profiles")
-        .select("target_company_urls, search_mode")
+        .select("target_company_urls")
         .eq("user_id", userId)
         .single();
 
@@ -48,7 +42,6 @@ const CompanyTargets = ({ userId, onSave }: CompanyTargetsProps) => {
       if (data) {
         setSettings({
           target_company_urls: data.target_company_urls || [],
-          search_mode: (data.search_mode as SearchMode) || "combined",
         });
       }
     } catch (error) {
@@ -134,7 +127,7 @@ const CompanyTargets = ({ userId, onSave }: CompanyTargetsProps) => {
         .from("profiles")
         .update({
           target_company_urls: settings.target_company_urls,
-          search_mode: settings.search_mode,
+          search_mode: "urls_only", // Set search_mode when using Target Companies tab
         })
         .eq("user_id", userId);
 
@@ -260,78 +253,12 @@ const CompanyTargets = ({ userId, onSave }: CompanyTargetsProps) => {
         </div>
       </div>
 
-      {/* Search Mode */}
-      <div className="space-y-4">
-        <Label className="text-base font-semibold">Search Mode</Label>
-        
-        <RadioGroup
-          value={settings.search_mode}
-          onValueChange={(value: SearchMode) => setSettings((prev) => ({ ...prev, search_mode: value }))}
-          className="space-y-3"
-        >
-          <label
-            className={`flex items-start gap-3 p-4 rounded-xl border-2 cursor-pointer transition-all ${
-              settings.search_mode === "combined"
-                ? "border-primary bg-primary/10"
-                : "border-white/10 bg-transparent hover:bg-white/5"
-            }`}
-          >
-            <RadioGroupItem value="combined" className="mt-0.5" />
-            <div>
-              <p className="font-medium">Combined Search</p>
-              <p className="text-sm text-muted-foreground">
-                Run both regular job search AND scrape your target company URLs
-              </p>
-            </div>
-          </label>
-
-          <label
-            className={`flex items-start gap-3 p-4 rounded-xl border-2 cursor-pointer transition-all ${
-              settings.search_mode === "urls_only"
-                ? "border-primary bg-primary/10"
-                : "border-white/10 bg-transparent hover:bg-white/5"
-            }`}
-          >
-            <RadioGroupItem value="urls_only" className="mt-0.5" />
-            <div>
-              <p className="font-medium">Target URLs Only</p>
-              <p className="text-sm text-muted-foreground">
-                Only scrape jobs from your target company URLs, skip general search
-              </p>
-            </div>
-          </label>
-
-          <label
-            className={`flex items-start gap-3 p-4 rounded-xl border-2 cursor-pointer transition-all ${
-              settings.search_mode === "search_only"
-                ? "border-primary bg-primary/10"
-                : "border-white/10 bg-transparent hover:bg-white/5"
-            }`}
-          >
-            <RadioGroupItem value="search_only" className="mt-0.5" />
-            <div>
-              <p className="font-medium">General Search Only</p>
-              <p className="text-sm text-muted-foreground">
-                Only run the regular job search, ignore target URLs
-              </p>
-            </div>
-          </label>
-        </RadioGroup>
-
-        {settings.search_mode === "urls_only" && settings.target_company_urls.length === 0 && (
-          <div className="flex items-center gap-2 p-3 rounded-lg bg-amber-500/10 border border-amber-500/30 text-amber-400">
-            <AlertCircle className="h-4 w-4 flex-shrink-0" />
-            <p className="text-sm">Add at least one company URL to use "Target URLs Only" mode</p>
-          </div>
-        )}
-      </div>
-
       {/* Save Button */}
       <Button
         variant="hero"
         size="lg"
         onClick={handleSave}
-        disabled={saving}
+        disabled={saving || settings.target_company_urls.length === 0}
         className="w-full"
       >
         {saving ? (
@@ -343,6 +270,12 @@ const CompanyTargets = ({ userId, onSave }: CompanyTargetsProps) => {
           "Save Company Targets"
         )}
       </Button>
+      
+      {settings.target_company_urls.length === 0 && (
+        <p className="text-sm text-muted-foreground text-center">
+          Add at least one company URL to save
+        </p>
+      )}
     </div>
   );
 };

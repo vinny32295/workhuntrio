@@ -13,11 +13,6 @@ import CompanyTargets from "@/components/CompanyTargets";
 import Footer from "@/components/Footer";
 import { TierKey } from "@/lib/stripe";
 import {
-  Collapsible,
-  CollapsibleContent,
-  CollapsibleTrigger,
-} from "@/components/ui/collapsible";
-import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
@@ -25,6 +20,9 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+
+type SearchMode = "search" | "targets";
 
 interface Profile {
   resume_url: string | null;
@@ -32,6 +30,7 @@ interface Profile {
   target_roles: string[] | null;
   work_type: string[] | null;
   phone_number: string | null;
+  target_company_urls: string[] | null;
 }
 
 const Dashboard = () => {
@@ -40,6 +39,7 @@ const Dashboard = () => {
   const [loading, setLoading] = useState(true);
   const [discoveredJobsKey, setDiscoveredJobsKey] = useState(0);
   const [subscriptionTier, setSubscriptionTier] = useState<TierKey>("free");
+  const [searchMode, setSearchMode] = useState<SearchMode>("search");
   const navigate = useNavigate();
 
   const checkSubscription = async () => {
@@ -57,12 +57,17 @@ const Dashboard = () => {
     try {
       const { data, error } = await supabase
         .from('profiles')
-        .select('resume_url, full_name, target_roles, work_type, phone_number')
+        .select('resume_url, full_name, target_roles, work_type, phone_number, target_company_urls')
         .eq('user_id', userId)
         .single();
       
       if (!error && data) {
         setProfile(data);
+        // Set initial search mode based on what's configured
+        if (data.target_company_urls && data.target_company_urls.length > 0 && 
+            (!data.target_roles || data.target_roles.length === 0)) {
+          setSearchMode("targets");
+        }
       }
     } catch (err) {
       console.error('Error fetching profile:', err);
@@ -226,51 +231,60 @@ const Dashboard = () => {
         </p>
 
         <div className="space-y-8">
-          {/* Job Preferences Section - Collapsible */}
-          <Collapsible className="glass-card border border-white/10 rounded-2xl" defaultOpen={!hasPreferences}>
-            <CollapsibleTrigger className="w-full p-6 flex items-center justify-between hover:bg-white/5 transition-colors rounded-2xl">
-              <h2 className="text-xl font-semibold flex items-center gap-2">
-                <Settings className="h-5 w-5 text-primary" />
-                Job Preferences
-                {hasPreferences && (
-                  <span className="ml-2 text-xs font-normal text-muted-foreground bg-primary/20 px-2 py-0.5 rounded-full">
-                    Configured
-                  </span>
-                )}
-              </h2>
-              <ChevronDown className="h-5 w-5 text-muted-foreground transition-transform duration-200 [[data-state=open]>&]:rotate-180" />
-            </CollapsibleTrigger>
-            <CollapsibleContent className="px-6 pb-6">
-              {user && (
-                <JobPreferencesForm 
-                  userId={user.id}
-                  onSave={handlePreferencesSave}
-                />
-              )}
-            </CollapsibleContent>
-          </Collapsible>
+          {/* Search Mode Toggle */}
+          <Tabs value={searchMode} onValueChange={(v) => setSearchMode(v as SearchMode)} className="w-full">
+            <div className="glass-card border border-white/10 rounded-2xl p-6">
+              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6">
+                <div>
+                  <h2 className="text-xl font-semibold flex items-center gap-2">
+                    <Settings className="h-5 w-5 text-primary" />
+                    Job Hunt Configuration
+                  </h2>
+                  <p className="text-sm text-muted-foreground mt-1">
+                    Choose how you want to find jobs
+                  </p>
+                </div>
+                <TabsList className="grid w-full sm:w-auto grid-cols-2 bg-muted/50">
+                  <TabsTrigger value="search" className="flex items-center gap-2 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
+                    <Search className="h-4 w-4" />
+                    Job Search
+                  </TabsTrigger>
+                  <TabsTrigger value="targets" className="flex items-center gap-2 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
+                    <Building2 className="h-4 w-4" />
+                    Target Companies
+                  </TabsTrigger>
+                </TabsList>
+              </div>
 
-          {/* Company Targets Section - Collapsible */}
-          <Collapsible className="glass-card border border-white/10 rounded-2xl" defaultOpen={false}>
-            <CollapsibleTrigger className="w-full p-6 flex items-center justify-between hover:bg-white/5 transition-colors rounded-2xl">
-              <h2 className="text-xl font-semibold flex items-center gap-2">
-                <Building2 className="h-5 w-5 text-primary" />
-                Company Targets
-                <span className="ml-2 text-xs font-normal text-muted-foreground">
-                  Optional
-                </span>
-              </h2>
-              <ChevronDown className="h-5 w-5 text-muted-foreground transition-transform duration-200 [[data-state=open]>&]:rotate-180" />
-            </CollapsibleTrigger>
-            <CollapsibleContent className="px-6 pb-6">
-              {user && (
-                <CompanyTargets 
-                  userId={user.id}
-                  onSave={handlePreferencesSave}
-                />
-              )}
-            </CollapsibleContent>
-          </Collapsible>
+              <TabsContent value="search" className="mt-0">
+                <div className="border-t border-white/10 pt-6">
+                  <p className="text-sm text-muted-foreground mb-6">
+                    Set your job preferences and we'll search across job boards to find matching positions.
+                  </p>
+                  {user && (
+                    <JobPreferencesForm 
+                      userId={user.id}
+                      onSave={handlePreferencesSave}
+                    />
+                  )}
+                </div>
+              </TabsContent>
+
+              <TabsContent value="targets" className="mt-0">
+                <div className="border-t border-white/10 pt-6">
+                  <p className="text-sm text-muted-foreground mb-6">
+                    Add direct links to company career pages and we'll scrape them for job listings.
+                  </p>
+                  {user && (
+                    <CompanyTargets 
+                      userId={user.id}
+                      onSave={handlePreferencesSave}
+                    />
+                  )}
+                </div>
+              </TabsContent>
+            </div>
+          </Tabs>
 
           {/* Start Hunt Section */}
           <div className="glass-card border border-white/10 rounded-2xl p-6 bg-gradient-to-r from-primary/5 to-transparent">
