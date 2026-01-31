@@ -10,33 +10,33 @@ import {
 const features = [
   {
     icon: Radar,
-    title: "Smart Job Matching",
-    description: "AI analyzes job descriptions and your profile to find positions where you're most likely to succeed.",
+    title: "Smart Job Discovery",
+    description: "AI scans thousands of job boards to surface roles that match your skills, experience, and preferences.",
   },
   {
     icon: FileText,
-    title: "Custom Cover Letters",
-    description: "Generates personalized cover letters tailored to each job, highlighting relevant experience.",
+    title: "Custom Resumes & Cover Letters",
+    description: "For each role, we generate a tailored resume and personalized cover letter highlighting your most relevant experience.",
   },
   {
     icon: BarChart3,
     title: "Real-time Dashboard",
-    description: "Track all applications, responses, and interview requests in one beautiful dashboard.",
+    description: "Track discovered jobs, download custom documents, and manage your applications in one place.",
   },
   {
     icon: Shield,
     title: "Privacy First",
-    description: "Your data is encrypted and never shared. You control exactly where you apply.",
+    description: "Your data is encrypted and never shared. You decide which roles to pursue and when to apply.",
   },
   {
     icon: Clock,
-    title: "24/7 Hunting",
-    description: "Our bots work around the clock, ensuring you never miss a perfect opportunity.",
+    title: "24/7 Job Scanning",
+    description: "Our AI works around the clock, ensuring you never miss a perfect opportunity the moment it's posted.",
   },
   {
     icon: Sparkles,
-    title: "Resume Optimization",
-    description: "AI suggests improvements to your resume to increase match rates and callbacks.",
+    title: "AI-Powered Tailoring",
+    description: "Every document is optimized with keywords and phrasing from the job description to maximize your callback rate.",
   },
 ];
 
