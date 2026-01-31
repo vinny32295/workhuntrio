@@ -102,6 +102,7 @@ const JobPreferencesForm = ({ userId, onSave }: JobPreferencesFormProps) => {
           work_type: preferences.work_type,
           location_zip: preferences.location_zip,
           search_radius_miles: preferences.search_radius_miles,
+          search_mode: "search_only", // Set search_mode when using Job Search tab
         })
         .eq('user_id', userId);
 
