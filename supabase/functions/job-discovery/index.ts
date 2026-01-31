@@ -2452,12 +2452,12 @@ Deno.serve(async (req) => {
                 // Use the Workday JSON API first (most reliable)
                 jobs = await fetchWorkdayJobsViaApi(url, 50);
                 
-                // If API fails, fall back to HTML scraping via searchCompanyCareerPage
+                // If API fails, fall back to Firecrawl HTML scraping
                 if (jobs.length === 0) {
                   console.log(`[BG] Workday API returned 0 jobs, falling back to HTML scraping`);
                   const companyMatch = url.match(/https?:\/\/(\w+)\.wd\d+\.myworkdayjobs\.com/);
                   const companyName = companyMatch ? companyMatch[1] : "Company";
-                  jobs = await searchCompanyCareerPage(companyName, url, targetRoles, lovableApiKey, serpApiKey);
+                  jobs = await searchWorkdayCareerPage(companyName, url, targetRoles, serpApiKey, lovableApiKey);
                 }
                 
                 console.log(`[BG] Total Workday jobs found: ${jobs.length}`);
