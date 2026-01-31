@@ -74,12 +74,13 @@ const formatSalary = (min: number | null, max: number | null, currency: string |
 
 interface DiscoveredJobsTableProps {
   userId: string;
+  refreshTrigger?: number;
 }
 
 type DateFilter = "all" | "today" | "week";
 type SortOrder = "newest" | "oldest" | "match";
 
-export default function DiscoveredJobsTable({ userId }: DiscoveredJobsTableProps) {
+export default function DiscoveredJobsTable({ userId, refreshTrigger }: DiscoveredJobsTableProps) {
   const [jobs, setJobs] = useState<DiscoveredJob[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -105,7 +106,7 @@ export default function DiscoveredJobsTable({ userId }: DiscoveredJobsTableProps
   useEffect(() => {
     fetchDiscoveredJobs();
     fetchUserTier();
-  }, [userId, debouncedSearch, dateFilter, sortOrder]);
+  }, [userId, debouncedSearch, dateFilter, sortOrder, refreshTrigger]);
 
   const handleRefresh = async () => {
     setRefreshing(true);

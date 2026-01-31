@@ -297,7 +297,7 @@ const Dashboard = () => {
               Discovered Jobs
             </h2>
             {user && (
-              <DiscoveredJobsTable key={discoveredJobsKey} userId={user.id} />
+              <DiscoveredJobsTable userId={user.id} refreshTrigger={discoveredJobsKey} />
             )}
           </div>
 
