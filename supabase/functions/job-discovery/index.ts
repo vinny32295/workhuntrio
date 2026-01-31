@@ -1513,6 +1513,148 @@ async function fetchAmazonJobsViaApi(
   }
 }
 
+// Fetch Workday jobs using their internal JSON API (much more reliable than HTML scraping)
+async function fetchWorkdayJobsViaApi(
+  userUrl: string,
+  maxResults: number = 50
+): Promise<ClassifiedJob[]> {
+  console.log(`Fetching Workday jobs via JSON API from: ${userUrl}`);
+  
+  try {
+    // Parse Workday URL to extract components
+    // Format: https://{company}.wd{n}.myworkdayjobs.com/{sitepath}?filters...
+    const url = new URL(userUrl);
+    const hostname = url.hostname; // e.g., "abglobal.wd1.myworkdayjobs.com"
+    const pathname = url.pathname.replace(/^\//, "").split("/")[0]; // e.g., "alliancebernsteincareers"
+    
+    // Extract company slug from hostname
+    const companyMatch = hostname.match(/^(\w+)\.wd\d+\.myworkdayjobs\.com/);
+    if (!companyMatch) {
+      console.error(`Could not parse Workday URL: ${userUrl}`);
+      return [];
+    }
+    const companySlug = companyMatch[1]; // e.g., "abglobal"
+    
+    // Build the API endpoint
+    const apiUrl = `https://${hostname}/wday/cxs/${companySlug}/${pathname}/jobs`;
+    console.log(`Workday API URL: ${apiUrl}`);
+    
+    // Parse facets from URL query params
+    const appliedFacets: Record<string, string[]> = {};
+    
+    // Common Workday filter parameters
+    const facetParams = [
+      "locationRegionStateProvince",
+      "locationCountry", 
+      "locationCity",
+      "jobFamilyGroup",
+      "timeType",
+      "workerSubType",
+      "Location_Country",
+      "Location_Region_State_Province",
+    ];
+    
+    for (const param of facetParams) {
+      const values = url.searchParams.getAll(param);
+      if (values.length > 0) {
+        appliedFacets[param] = values;
+        console.log(`  Facet ${param}: ${values.join(", ")}`);
+      }
+    }
+    
+    // Extract search text from 'q' parameter
+    const searchText = url.searchParams.get("q") || "";
+    if (searchText) {
+      console.log(`  Search text: ${searchText}`);
+    }
+    
+    // Make paginated requests to get all jobs
+    const allJobs: ClassifiedJob[] = [];
+    let offset = 0;
+    const limit = 20; // Workday typically limits to 20 per request
+    let totalJobs = 0;
+    
+    while (offset < maxResults) {
+      const requestBody = {
+        appliedFacets,
+        limit,
+        offset,
+        searchText,
+      };
+      
+      console.log(`Fetching Workday jobs: offset=${offset}, limit=${limit}`);
+      
+      const response = await fetch(apiUrl, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Accept": "application/json",
+          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+        },
+        body: JSON.stringify(requestBody),
+      });
+      
+      if (!response.ok) {
+        console.error(`Workday API error: ${response.status} ${response.statusText}`);
+        break;
+      }
+      
+      const data = await response.json();
+      
+      // Workday API returns { total: number, jobPostings: [...] }
+      totalJobs = data.total || 0;
+      const jobPostings = data.jobPostings || [];
+      
+      console.log(`Workday returned ${jobPostings.length} jobs (total: ${totalJobs})`);
+      
+      if (jobPostings.length === 0) break;
+      
+      // Convert to ClassifiedJob format
+      for (const job of jobPostings) {
+        // Build the full job URL
+        const jobPath = job.externalPath || job.bulletFields?.[0] || "";
+        const jobUrl = `https://${hostname}${jobPath.startsWith("/") ? "" : "/"}${jobPath}`;
+        
+        // Extract location from bulletFields or locationsText
+        const location = job.locationsText || job.bulletFields?.find((b: string) => 
+          b.includes(",") || b.match(/remote|hybrid|office/i)
+        ) || "";
+        
+        allJobs.push({
+          url: jobUrl,
+          title: job.title || "Workday Job",
+          snippet: location,
+          atsType: "workday",
+          companySlug: companySlug,
+          salaryMin: null,
+          salaryMax: null,
+          salaryCurrency: null,
+          fullDescription: job.descriptionTeaser || null,
+          requirements: null,
+          isDirectPosting: true,
+          isFromTargetUrl: true,
+          sourceUrl: userUrl,
+        });
+      }
+      
+      offset += limit;
+      
+      // Stop if we've fetched all available jobs
+      if (offset >= totalJobs) break;
+      
+      // Brief pause to avoid rate limiting
+      await new Promise(resolve => setTimeout(resolve, 200));
+    }
+    
+    console.log(`Total Workday jobs fetched: ${allJobs.length} of ${totalJobs}`);
+    return allJobs;
+    
+  } catch (error) {
+    console.error("Workday API fetch error:", error);
+    return [];
+  }
+}
+
 // Extract job listings from Amazon.jobs HTML (fallback for when API doesn't work)
 async function extractAmazonJobsFromHtml(
   html: string,
@@ -2307,10 +2449,18 @@ Deno.serve(async (req) => {
               let jobs: ClassifiedJob[] = [];
               
               if (urlLower.includes(".myworkdayjobs.com")) {
-                // Workday URL - use the searchWorkdayCareerPage function
-                const companyMatch = url.match(/https?:\/\/(\w+)\.wd\d+\.myworkdayjobs\.com/);
-                const companyName = companyMatch ? companyMatch[1] : "Company";
-                jobs = await searchCompanyCareerPage(companyName, url, targetRoles, lovableApiKey, serpApiKey);
+                // Use the Workday JSON API first (most reliable)
+                jobs = await fetchWorkdayJobsViaApi(url, 50);
+                
+                // If API fails, fall back to HTML scraping via searchCompanyCareerPage
+                if (jobs.length === 0) {
+                  console.log(`[BG] Workday API returned 0 jobs, falling back to HTML scraping`);
+                  const companyMatch = url.match(/https?:\/\/(\w+)\.wd\d+\.myworkdayjobs\.com/);
+                  const companyName = companyMatch ? companyMatch[1] : "Company";
+                  jobs = await searchCompanyCareerPage(companyName, url, targetRoles, lovableApiKey, serpApiKey);
+                }
+                
+                console.log(`[BG] Total Workday jobs found: ${jobs.length}`);
               } else if (urlLower.includes("amazon.jobs")) {
                 // Use the JSON API first (most reliable)
                 jobs = await fetchAmazonJobsViaApi(url, 50);
