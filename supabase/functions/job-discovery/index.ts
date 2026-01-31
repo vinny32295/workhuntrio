@@ -1629,14 +1629,22 @@ async function fetchWorkdayJobsViaApi(
       
       // Convert to ClassifiedJob format
       for (const job of jobPostings) {
-        // Build the full job URL using externalPath from the API response
-        // The externalPath typically looks like "/en-US/alliancebernsteincareers/job/Location/Title_ID"
-        // If externalPath is not available, construct it manually
+        // Build the full job URL
+        // The externalPath from Workday API is often just "/job/Location/Title_ID" without the site path
+        // We need to prepend the language and site path to make valid URLs
         let jobUrl = "";
         
         if (job.externalPath) {
-          // Use the externalPath directly - it should contain the full path
-          jobUrl = `https://${hostname}${job.externalPath}`;
+          // Check if externalPath already contains the site path
+          if (job.externalPath.includes(`/${sitePath}/`)) {
+            // Full path already present
+            jobUrl = `https://${hostname}${job.externalPath}`;
+          } else {
+            // Need to prepend site path (and optionally language prefix)
+            const basePath = langPrefix ? `/${langPrefix}/${sitePath}` : `/${sitePath}`;
+            // externalPath typically starts with /job/... so we just prepend the base
+            jobUrl = `https://${hostname}${basePath}${job.externalPath}`;
+          }
         } else {
           // Fallback: construct URL from job title slug
           const titleSlug = job.title?.replace(/[^a-zA-Z0-9-]/g, "-").replace(/-+/g, "-") || "job";
@@ -1644,7 +1652,7 @@ async function fetchWorkdayJobsViaApi(
           jobUrl = `https://${hostname}${basePath}/job/${titleSlug}`;
         }
         
-        console.log(`Job URL: ${jobUrl}`);
+        console.log(`Job URL constructed: ${jobUrl} (externalPath: ${job.externalPath || 'none'})`);
         
         // Extract location from bulletFields or locationsText
         const location = job.locationsText || job.bulletFields?.find((b: string) => 
