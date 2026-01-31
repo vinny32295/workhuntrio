@@ -1522,10 +1522,28 @@ async function fetchWorkdayJobsViaApi(
   
   try {
     // Parse Workday URL to extract components
-    // Format: https://{company}.wd{n}.myworkdayjobs.com/{sitepath}?filters...
+    // Format: https://{company}.wd{n}.myworkdayjobs.com/{lang}/{sitepath}?filters...
+    // or: https://{company}.wd{n}.myworkdayjobs.com/{sitepath}?filters...
     const url = new URL(userUrl);
     const hostname = url.hostname; // e.g., "abglobal.wd1.myworkdayjobs.com"
-    const pathname = url.pathname.replace(/^\//, "").split("/")[0]; // e.g., "alliancebernsteincareers"
+    
+    // Extract path segments - could be /en-US/alliancebernsteincareers or just /alliancebernsteincareers
+    const pathParts = url.pathname.replace(/^\//, "").split("/").filter(Boolean);
+    
+    // Determine language prefix and site path
+    let langPrefix = "";
+    let sitePath = "";
+    
+    if (pathParts.length >= 2 && pathParts[0].match(/^[a-z]{2}(-[A-Z]{2})?$/)) {
+      // Has language prefix like "en-US"
+      langPrefix = pathParts[0];
+      sitePath = pathParts[1];
+    } else if (pathParts.length >= 1) {
+      // No language prefix
+      sitePath = pathParts[0];
+    }
+    
+    console.log(`Workday URL parsed: lang=${langPrefix || 'none'}, site=${sitePath}`);
     
     // Extract company slug from hostname
     const companyMatch = hostname.match(/^(\w+)\.wd\d+\.myworkdayjobs\.com/);
@@ -1535,8 +1553,8 @@ async function fetchWorkdayJobsViaApi(
     }
     const companySlug = companyMatch[1]; // e.g., "abglobal"
     
-    // Build the API endpoint
-    const apiUrl = `https://${hostname}/wday/cxs/${companySlug}/${pathname}/jobs`;
+    // Build the API endpoint - always use the site path without language prefix
+    const apiUrl = `https://${hostname}/wday/cxs/${companySlug}/${sitePath}/jobs`;
     console.log(`Workday API URL: ${apiUrl}`);
     
     // Parse facets from URL query params
@@ -1611,9 +1629,22 @@ async function fetchWorkdayJobsViaApi(
       
       // Convert to ClassifiedJob format
       for (const job of jobPostings) {
-        // Build the full job URL
-        const jobPath = job.externalPath || job.bulletFields?.[0] || "";
-        const jobUrl = `https://${hostname}${jobPath.startsWith("/") ? "" : "/"}${jobPath}`;
+        // Build the full job URL using externalPath from the API response
+        // The externalPath typically looks like "/en-US/alliancebernsteincareers/job/Location/Title_ID"
+        // If externalPath is not available, construct it manually
+        let jobUrl = "";
+        
+        if (job.externalPath) {
+          // Use the externalPath directly - it should contain the full path
+          jobUrl = `https://${hostname}${job.externalPath}`;
+        } else {
+          // Fallback: construct URL from job title slug
+          const titleSlug = job.title?.replace(/[^a-zA-Z0-9-]/g, "-").replace(/-+/g, "-") || "job";
+          const basePath = langPrefix ? `/${langPrefix}/${sitePath}` : `/${sitePath}`;
+          jobUrl = `https://${hostname}${basePath}/job/${titleSlug}`;
+        }
+        
+        console.log(`Job URL: ${jobUrl}`);
         
         // Extract location from bulletFields or locationsText
         const location = job.locationsText || job.bulletFields?.find((b: string) => 
